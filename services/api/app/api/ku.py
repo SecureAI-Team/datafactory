@@ -1,15 +1,15 @@
-﻿from fastapi import APIRouter, HTTPException
+﻿from fastapi import APIRouter, HTTPException, Depends
 from ..schemas import KUCreate, KUPublish
 from ..services.ku import create_ku, review_publish
 from ..auth import require_role
 
 router = APIRouter()
 
-@router.post("/draft", dependencies=[require_role(["DATA_OPS", "BD_SALES"])])
+@router.post("/draft", dependencies=[Depends(require_role(["DATA_OPS", "BD_SALES"]))])
 def draft(ku: KUCreate):
     return create_ku(ku.dict())
 
-@router.post("/publish", dependencies=[require_role(["DATA_OPS"])])
+@router.post("/publish", dependencies=[Depends(require_role(["DATA_OPS"]))])
 def publish(body: KUPublish):
     ku = review_publish(body.ku_id, body.decision, body.comments)
     if ku is None:

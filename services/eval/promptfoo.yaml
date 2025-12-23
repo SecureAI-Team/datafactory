@@ -1,0 +1,19 @@
+﻿description: "Multi-turn regression"
+providers:
+  - id: gateway
+    label: adf-gateway
+    config:
+      apiBaseUrl: http://localhost/api/v1
+      apiKey: dummy
+tests:
+  - description: sales qa grounded
+    prompts:
+      - role: user
+        content: "Tell me about product Alpha for BFSI"
+      - role: user
+        content: "Give bullets with citations"
+    assert:
+      - type: contains
+        value: "["
+      - type: notContains
+        value: "hallucination"

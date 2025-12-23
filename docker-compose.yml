@@ -1,0 +1,137 @@
+version: "3.9"
+services:
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports: ["5432:5432"]
+
+  minio:
+    image: minio/minio:RELEASE.2024-05-28T17-19-05Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes: [ "minio:/data" ]
+    ports: ["9000:9000","9001:9001"]
+
+  opensearch:
+    image: opensearchproject/opensearch:2.13.0
+    environment:
+      discovery.type: single-node
+      plugins.security.disabled: "true"
+    ulimits: { memlock: -1, nofile: 65536 }
+    ports: ["9200:9200"]
+
+  tika:
+    image: apache/tika:2.9.0.0
+    ports: ["9998:9998"]
+
+  unstructured:
+    image: quay.io/unstructured-io/unstructured-api:latest
+    environment:
+      UNSTRUCTURED_API_KEY: dev
+    ports: ["8001:8000"]
+
+  api:
+    build: ./services/api
+    depends_on: [postgres, minio, opensearch, tika, unstructured]
+    environment:
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT
+      - POSTGRES_DB
+      - MINIO_ROOT_USER
+      - MINIO_ROOT_PASSWORD
+      - MINIO_URL
+      - OPENSEARCH_HOST
+      - OPENSEARCH_PORT
+      - OPENSEARCH_INDEX
+      - LANGFUSE_HOST
+      - LANGFUSE_API_KEY
+      - LANGFUSE_PUBLIC_KEY
+      - JWT_SECRET
+      - JWT_ALGO
+      - UPSTREAM_LLM_URL
+      - UPSTREAM_LLM_API_KEY
+      - DEFAULT_MODEL
+      - GATEWAY_SCENARIO_DEFAULT
+      - N8N_WEBHOOK_URL
+    ports: ["8000:8000"]
+
+  pipeline:
+    build: ./services/pipeline
+    environment:
+      - MINIO_URL
+      - MINIO_ROOT_USER
+      - MINIO_ROOT_PASSWORD
+      - OPENSEARCH_HOST
+      - OPENSEARCH_PORT
+      - UPSTREAM_LLM_URL
+      - UPSTREAM_LLM_API_KEY
+      - DEFAULT_MODEL
+    depends_on: [minio, opensearch, tika, unstructured]
+
+  airflow:
+    build: ./services/airflow
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    volumes:
+      - ./services/airflow/dags:/opt/airflow/dags
+      - ./services/pipeline:/opt/pipeline
+    depends_on: [postgres, minio, opensearch, tika, unstructured]
+
+  langfuse:
+    image: ghcr.io/langfuse/langfuse:latest
+    env_file: services/langfuse/docker.env
+    depends_on: [postgres]
+    ports: ["3000:3000"]
+
+  openmetadata:
+    image: openmetadata/server:1.5.3
+    env_file: services/openmetadata/docker.env
+    depends_on: [postgres]
+    ports: ["8585:8585"]
+
+  budibase:
+    image: budibase/budibase:2.22.2
+    environment:
+      BB_ADMIN_USER_EMAIL: admin@example.com
+      BB_ADMIN_USER_PASSWORD: admin
+    ports: ["10000:10000"]
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    environment:
+      OPENAI_API_BASE_URL: http://api:8000/v1
+      OPENAI_API_KEY: dummy
+    ports: ["3001:8080"]
+    depends_on: [api]
+
+  n8n:
+    image: n8nio/n8n:1.82.1
+    environment:
+      N8N_BASIC_AUTH_ACTIVE: "false"
+    ports: ["5678:5678"]
+
+  nginx:
+    image: nginx:1.25
+    volumes:
+      - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./services/dq/uncommitted/data_docs:/usr/share/nginx/html/dq-docs
+      - ./services/api/static:/usr/share/nginx/html/static
+      - ./infra/nginx/certs:/etc/nginx/certs
+    depends_on: [api, open-webui, budibase, airflow, langfuse, openmetadata, n8n]
+    ports:
+      - "80:80"
+      - "443:443"
+volumes:
+  pgdata:
+  minio:
+

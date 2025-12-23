@@ -1,0 +1,6 @@
+﻿- Login admin/admin at /portal
+- Create data sources:
+  - REST to `http://api:8000/api/ingest/upload`
+  - REST to `http://api:8000/api/ku/draft`
+  - REST to `http://api:8000/api/ku/publish`
+- Build pages: Upload (file picker -> upload endpoint), My Drafts (table bound to draft list), Review Queue (status=review), Published Library (status=published + tag filter). Approx 30 minutes.

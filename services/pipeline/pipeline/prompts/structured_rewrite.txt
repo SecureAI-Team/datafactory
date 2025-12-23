@@ -1,0 +1,1 @@
+﻿Rewrite into markdown with H1 title, 3-6 H2 sections, key bullets, tags, glossary terms, citations preserved. No new facts.

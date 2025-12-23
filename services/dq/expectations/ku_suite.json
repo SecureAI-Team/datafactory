@@ -1,0 +1,8 @@
+﻿{
+  \"expectation_suite_name\": \"ku_suite\",
+  \"expectations\": [
+    {\"expectation_type\": \"expect_column_values_to_not_be_null\", \"kwargs\": {\"column\": \"title\"}},
+    {\"expectation_type\": \"expect_column_values_to_not_be_null\", \"kwargs\": {\"column\": \"summary\"}},
+    {\"expectation_type\": \"expect_column_values_to_not_be_null\", \"kwargs\": {\"column\": \"tags_json\"}}
+  ]
+}

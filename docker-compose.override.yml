@@ -1,0 +1,11 @@
+version: "3.9"
+services:
+  postgres:
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+  api:
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+  airflow:
+    environment:
+      AIRFLOW__WEBSERVER__BASE_URL: http://localhost/airflow
+

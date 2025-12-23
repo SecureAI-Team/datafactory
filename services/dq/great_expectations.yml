@@ -1,0 +1,20 @@
+﻿datasources:
+  ku_pg:
+    module_name: great_expectations.datasource
+    class_name: Datasource
+expectations_store_name: expectations_store
+validations_store_name: validations_store
+checkpoint_store_name: checkpoint_store
+data_docs_sites:
+  local_site:
+    class_name: SiteBuilder
+    store_backend:
+      class_name: TupleFilesystemStoreBackend
+      base_directory: uncommitted/data_docs/
+stores:
+  expectations_store:
+    class_name: ExpectationsStore
+  validations_store:
+    class_name: ValidationsStore
+  checkpoint_store:
+    class_name: CheckpointStore

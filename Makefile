@@ -28,7 +28,7 @@ init:
 	$(COMPOSE) run --rm -v $(PWD):/work -w /work -e OPENSEARCH_URL=http://opensearch:9200 -e OPENSEARCH_INDEX=knowledge_units api python scripts/create_opensearch_index.py
 	$(COMPOSE) run --rm -v $(PWD):/work -w /work -e MINIO_URL=http://minio:9000 api python scripts/seed_data.py
 	# generate nginx basic auth file for /chat
-	docker run --rm --entrypoint htpasswd httpd:2 -Bbn $(BASIC_AUTH_USER) $(BASIC_AUTH_PASS) > infra/nginx/.htpasswd
+	docker run --rm --entrypoint htpasswd httpd:2 -Bbn "$(BASIC_AUTH_USER)" "$(BASIC_AUTH_PASS)" > infra/nginx/.htpasswd
 	$(COMPOSE) restart nginx
 
 reset:

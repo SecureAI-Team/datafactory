@@ -1,4 +1,4 @@
-﻿#!/bin/sh
+#!/bin/sh
 set -e
 host=${1:-localhost}
 port=${2:-80}

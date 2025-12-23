@@ -16,9 +16,9 @@ init:
 	sh scripts/wait_for.sh localhost 9200
 	sh scripts/wait_for.sh localhost 9000
 	$(COMPOSE) run --rm api alembic upgrade head
-	docker run --rm -v $(PWD):/work -w /work python:3.11-slim sh -c "pip install minio opensearch-py && python scripts/create_buckets.py"
-	docker run --rm -v $(PWD):/work -w /work python:3.11-slim sh -c "pip install opensearch-py && python scripts/create_opensearch_index.py"
-	docker run --rm -v $(PWD):/work -w /work python:3.11-slim sh -c "pip install minio && python scripts/seed_data.py"
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work api python scripts/create_buckets.py
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work api python scripts/create_opensearch_index.py
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work api python scripts/seed_data.py
 
 reset:
 	$(COMPOSE) down -v

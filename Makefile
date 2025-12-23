@@ -1,4 +1,10 @@
-﻿COMPOSE ?= $(shell if command -v docker-compose >/dev/null 2>&1; then echo docker-compose; elif command -v docker >/dev/null 2>&1; then echo "docker compose"; else echo docker-compose; fi)
+﻿POSTGRES_USER ?= adf
+POSTGRES_PASSWORD ?= adfpass
+POSTGRES_DB ?= adf
+MINIO_ROOT_USER ?= minio
+MINIO_ROOT_PASSWORD ?= minio123
+
+COMPOSE ?= $(shell if command -v docker-compose >/dev/null 2>&1; then echo docker-compose; elif command -v docker >/dev/null 2>&1; then echo "docker compose"; else echo docker-compose; fi)
 export COMPOSE
 
 up:

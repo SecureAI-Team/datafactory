@@ -11,5 +11,6 @@ client = Minio(
     secure=(parsed.scheme == "https"),
 )
 sample = b"Sample PDF content for sales."
-client.put_object("bronze", "uploads/sample.pdf", data=sample, length=len(sample))
+from io import BytesIO
+client.put_object("bronze", "uploads/sample.pdf", data=BytesIO(sample), length=len(sample))
 print("seeded sample upload")

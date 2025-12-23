@@ -12,9 +12,9 @@ logs:
 
 init:
 	$(COMPOSE) up -d postgres minio opensearch
-	./scripts/wait_for.sh postgres 5432
-	./scripts/wait_for.sh opensearch 9200
-	./scripts/wait_for.sh minio 9000
+	sh scripts/wait_for.sh localhost 5432
+	sh scripts/wait_for.sh localhost 9200
+	sh scripts/wait_for.sh localhost 9000
 	$(COMPOSE) run --rm api alembic upgrade head
 	python scripts/create_buckets.py
 	python scripts/create_opensearch_index.py

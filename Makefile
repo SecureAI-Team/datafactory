@@ -1,5 +1,5 @@
-﻿COMPOSE=docker-compose
-export
+﻿COMPOSE ?= $(shell if command -v docker-compose >/dev/null 2>&1; then echo docker-compose; elif command -v docker >/dev/null 2>&1; then echo "docker compose"; else echo docker-compose; fi)
+export COMPOSE
 
 up:
 	$(COMPOSE) up -d

@@ -30,7 +30,7 @@ test:
 	$(COMPOSE) run --rm api pytest -q
 
 eval:
-	$(COMPOSE) run --rm api promptfoo eval --config services/eval/promptfoo.yaml
+	promptfoo eval --config services/eval/promptfoo.yaml || (echo "Install promptfoo: npm install -g promptfoo"; exit 1)
 
 lint:
 	$(COMPOSE) run --rm api ruff check .

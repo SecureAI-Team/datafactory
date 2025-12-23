@@ -23,6 +23,8 @@ services:
     environment:
       discovery.type: single-node
       plugins.security.disabled: "true"
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_INITIAL_ADMIN_PASSWORD:-admin123}
     ulimits: { memlock: -1, nofile: 65536 }
     ports: ["9200:9200"]
 

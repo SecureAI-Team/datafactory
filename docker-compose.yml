@@ -82,6 +82,8 @@ services:
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__WEBSERVER__BASE_URL: http://localhost/airflow
+      AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "True"
     volumes:
       - ./services/airflow/dags:/opt/airflow/dags
       - ./services/pipeline:/opt/pipeline
@@ -112,6 +114,7 @@ services:
     environment:
       OPENAI_API_BASE_URL: http://api:8000/v1
       OPENAI_API_KEY: dummy
+      WEBUI_URL: http://localhost/chat
     ports: ["3001:8080"]
     depends_on: [api]
 
@@ -119,6 +122,8 @@ services:
     image: n8nio/n8n:1.82.1
     environment:
       N8N_BASIC_AUTH_ACTIVE: "false"
+      N8N_PATH: /n8n/
+      WEBHOOK_URL: http://localhost/n8n/
     ports: ["5678:5678"]
 
   clickhouse:

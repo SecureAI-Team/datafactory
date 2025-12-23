@@ -16,9 +16,9 @@ init:
 	sh scripts/wait_for.sh localhost 9200
 	sh scripts/wait_for.sh localhost 9000
 	$(COMPOSE) run --rm api alembic upgrade head
-	python scripts/create_buckets.py
-	python scripts/create_opensearch_index.py
-	python scripts/seed_data.py
+	$(COMPOSE) run --rm api python scripts/create_buckets.py
+	$(COMPOSE) run --rm api python scripts/create_opensearch_index.py
+	$(COMPOSE) run --rm api python scripts/seed_data.py
 
 reset:
 	$(COMPOSE) down -v

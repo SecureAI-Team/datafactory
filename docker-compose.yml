@@ -86,6 +86,7 @@ services:
       - ./services/airflow/dags:/opt/airflow/dags
       - ./services/pipeline:/opt/pipeline
     depends_on: [postgres, minio, opensearch, tika, unstructured]
+    command: ["bash", "-c", "airflow db init && airflow webserver -p 8080 & airflow scheduler"]
 
   langfuse:
     image: ghcr.io/langfuse/langfuse:latest

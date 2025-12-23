@@ -3,6 +3,8 @@ POSTGRES_PASSWORD ?= adfpass
 POSTGRES_DB ?= adf
 MINIO_ROOT_USER ?= minio
 MINIO_ROOT_PASSWORD ?= minio123
+BASIC_AUTH_USER ?= dev
+BASIC_AUTH_PASS ?= devpass
 
 COMPOSE ?= $(shell if command -v docker-compose >/dev/null 2>&1; then echo docker-compose; elif command -v docker >/dev/null 2>&1; then echo "docker compose"; else echo docker-compose; fi)
 export COMPOSE
@@ -28,6 +30,7 @@ init:
 	$(COMPOSE) run --rm -v $(PWD):/work -w /work -e OPENSEARCH_URL=http://opensearch:9200 -e OPENSEARCH_INDEX=knowledge_units api python scripts/create_opensearch_index.py
 	$(COMPOSE) run --rm -v $(PWD):/work -w /work -e MINIO_URL=http://minio:9000 api python scripts/seed_data.py
 	# generate nginx basic auth file for /chat
+	mkdir -p infra/nginx
 	docker run --rm --entrypoint htpasswd httpd:2 -Bbn "$(BASIC_AUTH_USER)" "$(BASIC_AUTH_PASS)" > infra/nginx/.htpasswd
 	$(COMPOSE) restart nginx
 

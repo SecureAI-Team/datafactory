@@ -122,7 +122,7 @@ services:
     ports: ["5678:5678"]
 
   clickhouse:
-    image: clickhouse/clickhouse-server:23.8
+    image: clickhouse/clickhouse-server:24.3
     environment:
       CLICKHOUSE_DB: langfuse
       CLICKHOUSE_USER: default

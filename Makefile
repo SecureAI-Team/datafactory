@@ -16,9 +16,9 @@ init:
 	sh scripts/wait_for.sh localhost 9200
 	sh scripts/wait_for.sh localhost 9000
 	$(COMPOSE) run --rm api alembic upgrade head
-	$(COMPOSE) run --rm -v $(PWD):/work -w /work api python scripts/create_buckets.py
-	$(COMPOSE) run --rm -v $(PWD):/work -w /work api python scripts/create_opensearch_index.py
-	$(COMPOSE) run --rm -v $(PWD):/work -w /work api python scripts/seed_data.py
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work -e MINIO_URL=http://minio:9000 api python scripts/create_buckets.py
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work -e OPENSEARCH_URL=http://opensearch:9200 -e OPENSEARCH_INDEX=knowledge_units api python scripts/create_opensearch_index.py
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work -e MINIO_URL=http://minio:9000 api python scripts/seed_data.py
 
 reset:
 	$(COMPOSE) down -v

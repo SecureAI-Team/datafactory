@@ -5,12 +5,13 @@
 git clone https://example.com/ai-data-factory.git
 cd ai-data-factory
 cp .env.example .env
+# 可根据需要修改 .env 中 BASIC_AUTH_USER/PASS、UPSTREAM_LLM_API_KEY 等
 make init up
 ```
 
-After containers are healthy:
+After containers are healthy (via nginx):
 - API: http://localhost/api/docs
-- Chat (Open WebUI): http://localhost/chat (basic auth: `dev:devpass`)
+- Chat (Open WebUI): http://localhost/chat (basic auth: `.env` 的 BASIC_AUTH_USER/PASS，默认 dev/devpass)
 - Portal (Budibase): http://localhost/portal
 - Airflow: http://localhost/airflow
 - Langfuse: http://localhost/langfuse

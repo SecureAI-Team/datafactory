@@ -126,7 +126,7 @@ services:
     environment:
       CLICKHOUSE_DB: langfuse
       CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_PASSWORD: changeme
     ulimits:
       nofile:
         soft: 262144

@@ -15,6 +15,7 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BROWSER_REDIRECT_URL: http://localhost/minio-console/
     volumes: [ "minio:/data" ]
     ports: ["9000:9000","9001:9001"]
 
@@ -82,8 +83,9 @@ services:
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__WEBSERVER__BASE_URL: http://localhost/airflow
+      AIRFLOW__WEBSERVER__BASE_URL: http://localhost/airflow/
       AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "True"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
     volumes:
       - ./services/airflow/dags:/opt/airflow/dags
       - ./services/pipeline:/opt/pipeline
@@ -91,7 +93,7 @@ services:
     command: ["bash", "-c", "airflow db init && airflow db upgrade && airflow webserver -p 8080 & exec airflow scheduler"]
 
   langfuse:
-    image: ghcr.io/langfuse/langfuse:latest
+    image: ghcr.io/langfuse/langfuse:2.95.1
     env_file: services/langfuse/docker.env
     depends_on: [postgres, clickhouse]
     ports: ["3000:3000"]

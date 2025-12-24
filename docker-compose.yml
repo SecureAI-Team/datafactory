@@ -93,7 +93,7 @@ services:
     command: ["bash", "-c", "airflow db init && airflow db upgrade && airflow webserver -p 8080 & exec airflow scheduler"]
 
   langfuse:
-    image: ghcr.io/langfuse/langfuse:3.50.2
+    image: ghcr.io/langfuse/langfuse:3
     env_file: services/langfuse/docker.env
     depends_on: [postgres, clickhouse, redis]
     ports: ["3000:3000"]

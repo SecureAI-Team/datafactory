@@ -84,10 +84,12 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+      AIRFLOW__WEBSERVER__BASE_URL: ""
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
     volumes:
       - ./services/airflow/dags:/opt/airflow/dags
       - ./services/pipeline:/opt/pipeline
+      - airflow_logs:/opt/airflow/logs
     depends_on: [postgres, minio, opensearch, tika, unstructured]
     ports: ["8080:8080"]
     command: >
@@ -176,4 +178,5 @@ services:
 volumes:
   pgdata:
   minio:
+  airflow_logs:
 

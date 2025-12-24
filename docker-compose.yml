@@ -82,18 +82,22 @@ services:
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__WEBSERVER__BASE_URL: http://0.0.0.0:8080
-      AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "True"
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-      _AIRFLOW_WWW_USER_CREATE: "true"
-      _AIRFLOW_WWW_USER_USERNAME: admin
-      _AIRFLOW_WWW_USER_PASSWORD: admin123
     volumes:
       - ./services/airflow/dags:/opt/airflow/dags
       - ./services/pipeline:/opt/pipeline
     depends_on: [postgres, minio, opensearch, tika, unstructured]
     ports: ["8080:8080"]
-    command: ["bash", "-c", "airflow db init && airflow db upgrade && airflow users create --role Admin --username admin --password admin123 --firstname Admin --lastname User --email admin@example.com || true && airflow webserver -p 8080 & exec airflow scheduler"]
+    command: >
+      bash -c "
+        airflow db init &&
+        airflow db upgrade &&
+        airflow users create --role Admin --username admin --password admin123 --firstname Admin --lastname User --email admin@example.com || true &&
+        airflow webserver --port 8080 &
+        exec airflow scheduler
+      "
 
   langfuse:
     image: ghcr.io/langfuse/langfuse:2

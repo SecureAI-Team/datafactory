@@ -94,7 +94,7 @@ services:
     ports: ["8080:8080"]
     command: >
       bash -c "
-        airflow db migrate &&
+        airflow db init &&
         airflow users create --role Admin --username admin --password admin123 --firstname Admin --lastname User --email admin@example.com || true &&
         airflow webserver --port 8080 &
         exec airflow scheduler

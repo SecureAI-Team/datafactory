@@ -50,4 +50,20 @@ lint:
 	$(COMPOSE) run --rm api ruff check .
 
 smoke:
-	./scripts/smoke_test.sh
+	sh scripts/smoke_test.sh
+
+user-sim:
+	sh scripts/user_simulation.sh
+
+status:
+	@echo "=== Container Status ==="
+	$(COMPOSE) ps
+	@echo ""
+	@echo "=== Service URLs ==="
+	@echo "Open WebUI:    http://localhost/ (via nginx) or http://localhost:3001"
+	@echo "FastAPI Docs:  http://localhost:8000/docs"
+	@echo "Langfuse:      http://localhost:3000"
+	@echo "n8n:           http://localhost:5678"
+	@echo "Airflow:       http://localhost:8080"
+	@echo "MinIO Console: http://localhost:9001"
+	@echo "Budibase:      http://localhost:10000"

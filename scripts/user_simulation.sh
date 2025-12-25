@@ -1,4 +1,5 @@
 #!/bin/bash
+# 确保使用 bash 而不是 sh
 # AI Data Factory - User Simulation Test
 # 模拟用户实际使用流程
 

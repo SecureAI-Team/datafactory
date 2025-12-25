@@ -50,10 +50,10 @@ lint:
 	$(COMPOSE) run --rm api ruff check .
 
 smoke:
-	sh scripts/smoke_test.sh
+	bash scripts/smoke_test.sh
 
 user-sim:
-	sh scripts/user_simulation.sh
+	bash scripts/user_simulation.sh
 
 status:
 	@echo "=== Container Status ==="

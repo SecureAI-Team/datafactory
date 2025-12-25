@@ -1,11 +1,14 @@
 ﻿import httpx, os, datetime, json
+from pathlib import Path
 
 UPSTREAM = os.getenv("UPSTREAM_LLM_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
 API_KEY = os.getenv("UPSTREAM_LLM_API_KEY", "your-dashscope-api-key")
 MODEL = os.getenv("DEFAULT_MODEL", "qwen-plus")
 
-grounded_prompt = open("/opt/pipeline/prompts/grounded_expansion.txt").read()
-rewrite_prompt = open("/opt/pipeline/prompts/structured_rewrite.txt").read()
+# Use path relative to this module
+_prompts_dir = Path(__file__).parent / "prompts"
+grounded_prompt = (_prompts_dir / "grounded_expansion.txt").read_text()
+rewrite_prompt = (_prompts_dir / "structured_rewrite.txt").read_text()
 
 
 def chat(prompt, text):

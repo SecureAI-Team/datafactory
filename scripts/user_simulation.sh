@@ -46,7 +46,7 @@ chat_payload='{
 }'
 
 echo "  Sending: '你好，请介绍一下你自己'"
-chat_response=$(curl -s -X POST "$API_URL/v1/chat/completions" \
+chat_response=$(curl -s -X POST "$API_URL/api/v1/chat/completions" \
     -H "Content-Type: application/json" \
     -d "$chat_payload" 2>/dev/null || echo '{"error": "connection failed"}')
 

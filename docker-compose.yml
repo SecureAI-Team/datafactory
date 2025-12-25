@@ -143,8 +143,11 @@ services:
     image: ghcr.io/open-webui/open-webui:main
     environment:
       OPENAI_API_BASE_URL: http://api:8000/v1
-      OPENAI_API_KEY: dummy
-      WEBUI_URL: http://localhost/chat
+      OPENAI_API_KEY: ${DASHSCOPE_API_KEY:-dummy}
+      OLLAMA_BASE_URL: ""
+      ENABLE_OLLAMA_API: "false"
+      WEBUI_URL: http://localhost
+      DEFAULT_MODELS: qwen-plus
     ports: ["3001:8080"]
     depends_on: [api]
 

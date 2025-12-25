@@ -1,14 +1,14 @@
 ﻿from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.models import Variable
 from datetime import datetime
 from minio import Minio
+from minio.commonconfig import CopySource
 import os
 
 # MinIO configuration
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio:9000")
-MINIO_ACCESS_KEY = os.getenv("MINIO_ROOT_USER", "minioadmin")
-MINIO_SECRET_KEY = os.getenv("MINIO_ROOT_PASSWORD", "minioadmin123")
+MINIO_ACCESS_KEY = os.getenv("MINIO_ROOT_USER", "minio")
+MINIO_SECRET_KEY = os.getenv("MINIO_ROOT_PASSWORD", "minio123")
 
 def list_and_process_uploads():
     """
@@ -39,18 +39,18 @@ def list_and_process_uploads():
     for obj in objects:
         print(f"Processing: {obj.object_name}")
         
-        # Copy from uploads to bronze
+        # Copy from uploads to bronze using CopySource
         client.copy_object(
             "bronze",
             f"raw/{obj.object_name}",
-            f"uploads/{obj.object_name}"
+            CopySource("uploads", obj.object_name)
         )
         
         # Remove from uploads (optional - comment out to keep original)
         # client.remove_object("uploads", obj.object_name)
         
         processed_files.append(obj.object_name)
-        print(f"Moved {obj.object_name} to bronze/raw/")
+        print(f"Copied {obj.object_name} to bronze/raw/")
     
     result = {"processed": len(processed_files), "files": processed_files}
     print(f"Ingestion complete: {result}")

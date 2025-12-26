@@ -1,12 +1,14 @@
 ﻿import json
 import uuid
+import logging
 from openai import OpenAI
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, BackgroundTasks
 from fastapi.responses import StreamingResponse, JSONResponse
 from ..services.retrieval import search
 from ..services.scenarios import get_prompt
 from ..config import settings
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Initialize OpenAI client with Aliyun DashScope compatible endpoint
@@ -25,16 +27,23 @@ try:
             secret_key=settings.langfuse_api_key,
             host=settings.langfuse_host or "http://langfuse:3000",
         )
+        logger.info(f"Langfuse initialized: host={settings.langfuse_host}, public_key={settings.langfuse_public_key[:10]}...")
+        print(f"✓ Langfuse initialized: host={settings.langfuse_host}")
+    else:
+        logger.warning("Langfuse not configured: missing LANGFUSE_PUBLIC_KEY or LANGFUSE_API_KEY")
+        print(f"⚠ Langfuse not configured: PUBLIC_KEY={settings.langfuse_public_key}, API_KEY={'set' if settings.langfuse_api_key else 'not set'}")
 except Exception as e:
-    print(f"Langfuse initialization skipped: {e}")
+    logger.error(f"Langfuse initialization failed: {e}")
+    print(f"✗ Langfuse initialization failed: {e}")
 
 @router.post("/chat/completions")
-async def gateway(body: dict, x_scenario_id: str = Header(None), authorization: str = Header(None)):
+async def gateway(body: dict, background_tasks: BackgroundTasks, x_scenario_id: str = Header(None), authorization: str = Header(None)):
     """
     OpenAI-compatible chat completions endpoint with RAG.
     Retrieves relevant context from OpenSearch and augments the prompt.
     """
     trace_id = str(uuid.uuid4())
+    logger.info(f"Chat request received, trace_id={trace_id}, langfuse_enabled={langfuse is not None}")
     scenario = x_scenario_id or settings.default_scenario
     prompt_row = get_prompt(scenario)
     system_prompt = prompt_row.template if prompt_row else "You are a helpful assistant. Cite sources when available."
@@ -105,23 +114,30 @@ async def gateway(body: dict, x_scenario_id: str = Header(None), authorization: 
         # Streaming response
         def generate():
             full_response = ""
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                stream=True,
-            )
-            for chunk in response:
-                chunk_data = chunk.model_dump()
-                if chunk.choices and chunk.choices[0].delta.content:
-                    full_response += chunk.choices[0].delta.content
-                yield f"data: {json.dumps(chunk_data)}\n\n"
-            yield "data: [DONE]\n\n"
-            
-            # End generation span
-            if generation:
-                generation.end(output=full_response)
-            if trace:
-                trace.update(output={"response": full_response[:500]})
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    stream=True,
+                )
+                for chunk in response:
+                    chunk_data = chunk.model_dump()
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        full_response += chunk.choices[0].delta.content
+                    yield f"data: {json.dumps(chunk_data)}\n\n"
+                yield "data: [DONE]\n\n"
+            finally:
+                # End generation span and flush (runs after streaming completes)
+                try:
+                    if generation:
+                        generation.end(output=full_response)
+                    if trace:
+                        trace.update(output={"response": full_response[:500]})
+                    if langfuse:
+                        langfuse.flush()
+                        logger.info(f"Langfuse trace flushed (stream): {trace_id}")
+                except Exception as e:
+                    logger.error(f"Langfuse flush error (stream): {e}")
         
         return StreamingResponse(generate(), media_type="text/event-stream")
     else:
@@ -133,17 +149,23 @@ async def gateway(body: dict, x_scenario_id: str = Header(None), authorization: 
         )
         response_content = response.choices[0].message.content if response.choices else ""
         
-        # End generation span
-        if generation:
-            generation.end(
-                output=response_content,
-                usage={
-                    "input": response.usage.prompt_tokens if response.usage else 0,
-                    "output": response.usage.completion_tokens if response.usage else 0,
-                }
-            )
-        if trace:
-            trace.update(output={"response": response_content[:500]})
+        # End generation span and flush to Langfuse
+        try:
+            if generation:
+                generation.end(
+                    output=response_content,
+                    usage={
+                        "input": response.usage.prompt_tokens if response.usage else 0,
+                        "output": response.usage.completion_tokens if response.usage else 0,
+                    }
+                )
+            if trace:
+                trace.update(output={"response": response_content[:500]})
+            if langfuse:
+                langfuse.flush()
+                logger.info(f"Langfuse trace flushed: {trace_id}")
+        except Exception as e:
+            logger.error(f"Langfuse flush error: {e}")
         
         return JSONResponse(content=response.model_dump())
 
@@ -158,4 +180,15 @@ async def list_models():
             {"id": "qwen-turbo", "object": "model", "owned_by": "alibaba"},
             {"id": "qwen-max", "object": "model", "owned_by": "alibaba"},
         ]
+    }
+
+
+@router.get("/debug/langfuse")
+async def debug_langfuse():
+    """Debug endpoint to check Langfuse configuration."""
+    return {
+        "langfuse_enabled": langfuse is not None,
+        "langfuse_host": settings.langfuse_host,
+        "langfuse_public_key": settings.langfuse_public_key[:10] + "..." if settings.langfuse_public_key else None,
+        "langfuse_api_key_set": bool(settings.langfuse_api_key),
     }

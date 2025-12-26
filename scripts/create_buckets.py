@@ -11,7 +11,9 @@ client = Minio(
     secure=(parsed.scheme == "https"),
 )
 
-for b in ["bronze", "silver", "gold", "artifacts"]:
+for b in ["uploads", "bronze", "silver", "gold", "artifacts"]:
     if not client.bucket_exists(b):
         client.make_bucket(b)
         print("created bucket", b)
+    else:
+        print("bucket exists", b)

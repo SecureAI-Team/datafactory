@@ -209,6 +209,12 @@ init_databases() {
     
     source .env
     
+    # 重要：设置 PostgreSQL 用户密码（因为 PostgreSQL 只在首次启动时读取 POSTGRES_PASSWORD）
+    # 这确保密码与 .env 中的配置一致
+    log_info "同步 PostgreSQL 用户密码..."
+    docker compose exec -T postgres psql -U "$POSTGRES_USER" -c \
+        "ALTER USER $POSTGRES_USER WITH PASSWORD '$POSTGRES_PASSWORD';" || true
+    
     # 创建 Airflow 数据库
     docker compose exec -T postgres psql -U "$POSTGRES_USER" -tc \
         "SELECT 1 FROM pg_database WHERE datname='airflow';" | grep -q 1 || \
@@ -228,6 +234,26 @@ init_databases() {
 }
 
 #===============================================================================
+# 6.5 修复脚本文件
+#===============================================================================
+fix_scripts() {
+    log_info "修复脚本文件（移除 Windows 换行符和 BOM）..."
+    
+    # 修复所有 shell 脚本
+    for script in scripts/*.sh; do
+        if [ -f "$script" ]; then
+            # 移除 BOM
+            sed -i '1s/^\xef\xbb\xbf//' "$script" 2>/dev/null || true
+            # 移除 Windows 换行符
+            sed -i 's/\r$//' "$script" 2>/dev/null || true
+            chmod +x "$script"
+        fi
+    done
+    
+    log_success "脚本文件修复完成"
+}
+
+#===============================================================================
 # 7. 构建和启动所有服务
 #===============================================================================
 start_all_services() {
@@ -239,6 +265,36 @@ start_all_services() {
     
     log_info "等待服务启动..."
     sleep 30
+    
+    # 等待 API 服务就绪
+    log_info "等待 API 服务就绪..."
+    for i in {1..30}; do
+        if curl -s http://localhost:8000/health &>/dev/null; then
+            log_success "API 服务已就绪"
+            break
+        fi
+        echo -n "."
+        sleep 2
+    done
+    echo ""
+}
+
+#===============================================================================
+# 7.5 运行数据库迁移
+#===============================================================================
+run_migrations() {
+    log_info "运行 API 数据库迁移 (Alembic)..."
+    
+    # 等待 API 容器完全启动
+    sleep 5
+    
+    # 运行 Alembic 迁移
+    docker compose exec -T api alembic upgrade head || {
+        log_warn "Alembic 迁移失败，尝试初始化..."
+        docker compose exec -T api alembic stamp head || true
+    }
+    
+    log_success "数据库迁移完成"
 }
 
 #===============================================================================
@@ -247,8 +303,12 @@ start_all_services() {
 init_storage() {
     log_info "初始化 MinIO buckets..."
     
+    source .env
+    
     docker compose run --rm -v "$(pwd)":/work -w /work \
         -e MINIO_URL=http://minio:9000 \
+        -e MINIO_ROOT_USER="$MINIO_ROOT_USER" \
+        -e MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
         api python scripts/create_buckets.py || log_warn "Buckets 可能已存在"
     
     log_info "初始化 OpenSearch 索引..."
@@ -262,6 +322,8 @@ init_storage() {
     
     docker compose run --rm -v "$(pwd)":/work -w /work \
         -e MINIO_URL=http://minio:9000 \
+        -e MINIO_ROOT_USER="$MINIO_ROOT_USER" \
+        -e MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
         api python scripts/seed_data.py || log_warn "种子数据可能已存在"
     
     log_success "存储初始化完成"
@@ -398,9 +460,11 @@ main() {
     setup_project
     create_env
     create_dirs
+    fix_scripts
     start_base_services
     init_databases
     start_all_services
+    run_migrations
     init_storage
     
     # 检查是否配置了 API Key
@@ -421,11 +485,35 @@ main() {
 case "${1:-}" in
     docker)     check_docker ;;
     env)        create_env ;;
+    dirs)       create_dirs ;;
+    fix)        fix_scripts ;;
+    base)       start_base_services ;;
+    db)         init_databases ;;
     start)      start_all_services ;;
+    migrate)    run_migrations ;;
     init)       init_storage ;;
     pipeline)   run_initial_pipeline ;;
     verify)     verify_deployment ;;
     info)       print_access_info ;;
+    help)
+        echo "用法: $0 [步骤]"
+        echo ""
+        echo "步骤:"
+        echo "  docker    - 检查/安装 Docker"
+        echo "  env       - 生成 .env 配置文件"
+        echo "  dirs      - 创建必要目录"
+        echo "  fix       - 修复脚本文件（BOM/换行符）"
+        echo "  base      - 启动基础服务"
+        echo "  db        - 初始化数据库"
+        echo "  start     - 启动所有服务"
+        echo "  migrate   - 运行数据库迁移"
+        echo "  init      - 初始化存储（MinIO/OpenSearch）"
+        echo "  pipeline  - 运行初始 Pipeline"
+        echo "  verify    - 验证部署"
+        echo "  info      - 显示访问信息"
+        echo ""
+        echo "不带参数运行完整部署流程"
+        ;;
     *)          main ;;
 esac
 

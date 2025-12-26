@@ -116,14 +116,27 @@ services:
 
   langfuse:
     image: ghcr.io/langfuse/langfuse:2
-    env_file: services/langfuse/docker.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/langfuse
+      NEXTAUTH_SECRET: ${JWT_SECRET:-devsecret-must-be-at-least-32characters}
+      NEXTAUTH_URL: http://localhost:3000
+      SALT: ${LANGFUSE_SALT:-adf-langfuse-salt-for-encryption-32chars}
+      HOSTNAME: 0.0.0.0
+      TELEMETRY_ENABLED: "false"
+      NEXT_PUBLIC_SIGN_UP_DISABLED: "false"
     depends_on: [postgres]
     ports: ["3000:3000"]
 
   openmetadata:
     image: openmetadata/server:1.5.3
-    env_file: services/openmetadata/docker.env
     environment:
+      DB_DRIVER_CLASS: org.postgresql.Driver
+      DB_SCHEME: postgresql
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER}
+      DB_USER_PASSWORD: ${POSTGRES_PASSWORD}
+      OM_DATABASE: openmetadata
       OPENMETADATA_CLUSTER_NAME: openmetadata
       SERVER_HOST_API_URL: http://localhost:8585/api
       OM_URI: http://localhost:8585

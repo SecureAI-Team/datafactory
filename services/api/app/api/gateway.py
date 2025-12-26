@@ -30,10 +30,23 @@ async def gateway(body: dict, x_scenario_id: str = Header(None), authorization: 
     # Retrieve relevant context from OpenSearch
     hits = search(query, top_k=4)
     if hits:
-        context = "\n\n".join([f"[{h['id']}] {h['title']}: {h['summary']}" for h in hits])
-        context_prompt = f"Retrieved context (cite source IDs when using this information):\n{context}"
+        context_parts = []
+        for h in hits:
+            part = f"【来源: {h['source_file']}】\n标题: {h['title']}\n摘要: {h['summary']}"
+            if h.get('key_points'):
+                part += f"\n要点: {'; '.join(h['key_points'][:3])}"
+            if h.get('body'):
+                # Include first 500 chars of body for more context
+                part += f"\n详情: {h['body'][:500]}..."
+            context_parts.append(part)
+        context = "\n\n---\n\n".join(context_parts)
+        context_prompt = f"""以下是从知识库检索到的相关内容，请基于这些内容回答用户问题，并在回答末尾注明来源：
+
+{context}
+
+请在回答中引用上述来源，格式如：【来源: xxx】"""
     else:
-        context_prompt = "No relevant context found in the knowledge base."
+        context_prompt = "知识库中未找到相关内容，请基于通用知识回答。"
     
     # Build messages with system prompt and context
     messages = [

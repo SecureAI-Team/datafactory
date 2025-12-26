@@ -2,7 +2,26 @@
 
 一站式 AI 数据工厂：文档处理 → 知识提取 → RAG 对话
 
-## 🚀 快速开始
+## 🚀 一键部署 (阿里云 ECS)
+
+```bash
+# 1. SSH 登录 ECS
+ssh root@YOUR_ECS_IP
+
+# 2. 下载代码到 /opt/datafactory
+mkdir -p /opt/datafactory && cd /opt/datafactory
+# (上传或 git clone 代码)
+
+# 3. 一键部署
+chmod +x deploy.sh
+DASHSCOPE_API_KEY=sk-你的百炼Key bash deploy.sh
+
+# 部署完成后访问:
+# Chat: http://YOUR_IP:3001
+# API:  http://YOUR_IP:8000/docs
+```
+
+## 🔧 手动部署
 
 ```bash
 # 1. 克隆并配置

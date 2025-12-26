@@ -13,7 +13,7 @@ NC='\033[0m' # No Color
 
 # 配置
 HOST="${HOST:-localhost}"
-PUBLIC_IP="${PUBLIC_IP:-47.115.214.127}"
+PUBLIC_IP="${PUBLIC_IP:-localhost}"
 
 # 计数器
 PASSED=0

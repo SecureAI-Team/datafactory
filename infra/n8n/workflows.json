@@ -1,6 +1,6 @@
 [
   {
-    "name": "文档处理完成通知",
+    "name": "Document Processing Notification",
     "nodes": [
       {
         "parameters": {
@@ -23,23 +23,23 @@
             ]
           }
         },
-        "name": "导入知识图谱",
+        "name": "Import to KG",
         "type": "n8n-nodes-base.httpRequest",
         "position": [450, 300]
       }
     ],
     "connections": {
-      "Webhook": {"main": [[{"node": "导入知识图谱", "type": "main", "index": 0}]]}
+      "Webhook": {"main": [[{"node": "Import to KG", "type": "main", "index": 0}]]}
     }
   },
   {
-    "name": "每日反馈分析报告",
+    "name": "Daily Feedback Analysis",
     "nodes": [
       {
         "parameters": {
           "rule": {"interval": [{"field": "hours", "hoursInterval": 24}]}
         },
-        "name": "每日触发",
+        "name": "Daily Trigger",
         "type": "n8n-nodes-base.scheduleTrigger",
         "position": [250, 300]
       },
@@ -47,7 +47,7 @@
         "parameters": {
           "url": "http://api:8000/v1/debug/feedback-report"
         },
-        "name": "获取反馈报告",
+        "name": "Get Feedback Report",
         "type": "n8n-nodes-base.httpRequest",
         "position": [450, 300]
       },
@@ -57,24 +57,24 @@
             "number": [{"value1": "={{ $json.health_score }}", "operation": "smaller", "value2": 70}]
           }
         },
-        "name": "健康评分检查",
+        "name": "Health Check",
         "type": "n8n-nodes-base.if",
         "position": [650, 300]
       }
     ],
     "connections": {
-      "每日触发": {"main": [[{"node": "获取反馈报告", "type": "main", "index": 0}]]},
-      "获取反馈报告": {"main": [[{"node": "健康评分检查", "type": "main", "index": 0}]]}
+      "Daily Trigger": {"main": [[{"node": "Get Feedback Report", "type": "main", "index": 0}]]},
+      "Get Feedback Report": {"main": [[{"node": "Health Check", "type": "main", "index": 0}]]}
     }
   },
   {
-    "name": "知识图谱定期同步",
+    "name": "KG Stats Sync",
     "nodes": [
       {
         "parameters": {
           "rule": {"interval": [{"field": "hours", "hoursInterval": 6}]}
         },
-        "name": "每6小时触发",
+        "name": "Every 6 Hours",
         "type": "n8n-nodes-base.scheduleTrigger",
         "position": [250, 300]
       },
@@ -82,17 +82,17 @@
         "parameters": {
           "url": "http://api:8000/v1/kg/stats"
         },
-        "name": "获取图谱统计",
+        "name": "Get KG Stats",
         "type": "n8n-nodes-base.httpRequest",
         "position": [450, 300]
       }
     ],
     "connections": {
-      "每6小时触发": {"main": [[{"node": "获取图谱统计", "type": "main", "index": 0}]]}
+      "Every 6 Hours": {"main": [[{"node": "Get KG Stats", "type": "main", "index": 0}]]}
     }
   },
   {
-    "name": "用户查询后推荐",
+    "name": "User Query Recommendation",
     "nodes": [
       {
         "parameters": {
@@ -116,7 +116,7 @@
             ]
           }
         },
-        "name": "记录查询行为",
+        "name": "Track Query",
         "type": "n8n-nodes-base.httpRequest",
         "position": [450, 300]
       },
@@ -124,15 +124,14 @@
         "parameters": {
           "url": "http://api:8000/v1/recommend?user_id={{ $json.user_id }}&limit=5"
         },
-        "name": "获取推荐",
+        "name": "Get Recommendations",
         "type": "n8n-nodes-base.httpRequest",
         "position": [650, 300]
       }
     ],
     "connections": {
-      "Webhook": {"main": [[{"node": "记录查询行为", "type": "main", "index": 0}]]},
-      "记录查询行为": {"main": [[{"node": "获取推荐", "type": "main", "index": 0}]]}
+      "Webhook": {"main": [[{"node": "Track Query", "type": "main", "index": 0}]]},
+      "Track Query": {"main": [[{"node": "Get Recommendations", "type": "main", "index": 0}]]}
     }
   }
 ]
-

@@ -56,7 +56,7 @@ def activate_workflow(workflow_id: str) -> bool:
 def get_document_processing_workflow():
     """文档处理通知工作流"""
     return {
-        "name": "文档处理完成通知",
+        "name": "Document Processing Notification",
         "nodes": [
             {
                 "parameters": {
@@ -90,7 +90,7 @@ def get_document_processing_workflow():
                     "options": {}
                 },
                 "id": "http-1",
-                "name": "导入知识图谱",
+                "name": "Import to KG",
                 "type": "n8n-nodes-base.httpRequest",
                 "typeVersion": 3,
                 "position": [450, 300]
@@ -109,22 +109,20 @@ def get_document_processing_workflow():
         ],
         "connections": {
             "Webhook": {
-                "main": [[{"node": "导入知识图谱", "type": "main", "index": 0}]]
+                "main": [[{"node": "Import to KG", "type": "main", "index": 0}]]
             },
-            "导入知识图谱": {
+            "Import to KG": {
                 "main": [[{"node": "Respond to Webhook", "type": "main", "index": 0}]]
             }
         },
-        "settings": {},
-        "staticData": None,
-        "tags": []
+        "settings": {}
     }
 
 
 def get_feedback_analysis_workflow():
     """反馈分析工作流"""
     return {
-        "name": "每日反馈分析报告",
+        "name": "Daily Feedback Analysis",
         "nodes": [
             {
                 "parameters": {
@@ -133,7 +131,7 @@ def get_feedback_analysis_workflow():
                     }
                 },
                 "id": "schedule-1",
-                "name": "每日触发",
+                "name": "Daily Trigger",
                 "type": "n8n-nodes-base.scheduleTrigger",
                 "typeVersion": 1,
                 "position": [250, 300]
@@ -144,7 +142,7 @@ def get_feedback_analysis_workflow():
                     "options": {}
                 },
                 "id": "http-2",
-                "name": "获取反馈报告",
+                "name": "Get Feedback Report",
                 "type": "n8n-nodes-base.httpRequest",
                 "typeVersion": 3,
                 "position": [450, 300]
@@ -162,46 +160,44 @@ def get_feedback_analysis_workflow():
                     }
                 },
                 "id": "if-1",
-                "name": "健康评分检查",
+                "name": "Health Check",
                 "type": "n8n-nodes-base.if",
                 "typeVersion": 1,
                 "position": [650, 300]
             },
             {
                 "parameters": {
-                    "functionCode": "return [{ json: { alert: '系统健康评分过低: ' + $input.first().json.health_score, report: $input.first().json } }];"
+                    "functionCode": "return [{ json: { alert: 'Low health score: ' + $input.first().json.health_score, report: $input.first().json } }];"
                 },
                 "id": "code-1",
-                "name": "生成告警",
+                "name": "Generate Alert",
                 "type": "n8n-nodes-base.code",
                 "typeVersion": 1,
                 "position": [850, 200]
             }
         ],
         "connections": {
-            "每日触发": {
-                "main": [[{"node": "获取反馈报告", "type": "main", "index": 0}]]
+            "Daily Trigger": {
+                "main": [[{"node": "Get Feedback Report", "type": "main", "index": 0}]]
             },
-            "获取反馈报告": {
-                "main": [[{"node": "健康评分检查", "type": "main", "index": 0}]]
+            "Get Feedback Report": {
+                "main": [[{"node": "Health Check", "type": "main", "index": 0}]]
             },
-            "健康评分检查": {
+            "Health Check": {
                 "main": [
-                    [{"node": "生成告警", "type": "main", "index": 0}],
+                    [{"node": "Generate Alert", "type": "main", "index": 0}],
                     []
                 ]
             }
         },
-        "settings": {},
-        "staticData": None,
-        "tags": []
+        "settings": {}
     }
 
 
 def get_kg_sync_workflow():
     """知识图谱同步工作流"""
     return {
-        "name": "知识图谱定期同步",
+        "name": "KG Stats Sync",
         "nodes": [
             {
                 "parameters": {
@@ -210,7 +206,7 @@ def get_kg_sync_workflow():
                     }
                 },
                 "id": "schedule-2",
-                "name": "每6小时触发",
+                "name": "Every 6 Hours",
                 "type": "n8n-nodes-base.scheduleTrigger",
                 "typeVersion": 1,
                 "position": [250, 300]
@@ -221,49 +217,38 @@ def get_kg_sync_workflow():
                     "options": {}
                 },
                 "id": "http-3",
-                "name": "获取图谱统计",
+                "name": "Get KG Stats",
                 "type": "n8n-nodes-base.httpRequest",
                 "typeVersion": 3,
                 "position": [450, 300]
             },
             {
                 "parameters": {
-                    "functionCode": """
-const stats = $input.first().json;
-console.log('图谱统计:', JSON.stringify(stats));
-return [{ json: { 
-    timestamp: new Date().toISOString(),
-    nodes: stats.nodes,
-    edges: stats.edges,
-    labels: stats.labels
-}}];
-"""
+                    "functionCode": "const stats = $input.first().json; console.log('KG Stats:', JSON.stringify(stats)); return [{ json: { timestamp: new Date().toISOString(), nodes: stats.nodes, edges: stats.edges, labels: stats.labels }}];"
                 },
                 "id": "code-2",
-                "name": "记录统计",
+                "name": "Log Stats",
                 "type": "n8n-nodes-base.code",
                 "typeVersion": 1,
                 "position": [650, 300]
             }
         ],
         "connections": {
-            "每6小时触发": {
-                "main": [[{"node": "获取图谱统计", "type": "main", "index": 0}]]
+            "Every 6 Hours": {
+                "main": [[{"node": "Get KG Stats", "type": "main", "index": 0}]]
             },
-            "获取图谱统计": {
-                "main": [[{"node": "记录统计", "type": "main", "index": 0}]]
+            "Get KG Stats": {
+                "main": [[{"node": "Log Stats", "type": "main", "index": 0}]]
             }
         },
-        "settings": {},
-        "staticData": None,
-        "tags": []
+        "settings": {}
     }
 
 
 def get_recommendation_workflow():
     """推荐触发工作流"""
     return {
-        "name": "用户查询后推荐",
+        "name": "User Query Recommendation",
         "nodes": [
             {
                 "parameters": {
@@ -292,7 +277,7 @@ def get_recommendation_workflow():
                     "options": {}
                 },
                 "id": "http-4",
-                "name": "记录查询行为",
+                "name": "Track Query",
                 "type": "n8n-nodes-base.httpRequest",
                 "typeVersion": 3,
                 "position": [450, 300]
@@ -309,7 +294,7 @@ def get_recommendation_workflow():
                     "options": {}
                 },
                 "id": "http-5",
-                "name": "获取推荐",
+                "name": "Get Recommendations",
                 "type": "n8n-nodes-base.httpRequest",
                 "typeVersion": 3,
                 "position": [650, 300]
@@ -320,7 +305,7 @@ def get_recommendation_workflow():
                     "responseBody": "={{ $json }}"
                 },
                 "id": "respond-2",
-                "name": "返回推荐",
+                "name": "Return Response",
                 "type": "n8n-nodes-base.respondToWebhook",
                 "typeVersion": 1,
                 "position": [850, 300]
@@ -328,18 +313,16 @@ def get_recommendation_workflow():
         ],
         "connections": {
             "Webhook": {
-                "main": [[{"node": "记录查询行为", "type": "main", "index": 0}]]
+                "main": [[{"node": "Track Query", "type": "main", "index": 0}]]
             },
-            "记录查询行为": {
-                "main": [[{"node": "获取推荐", "type": "main", "index": 0}]]
+            "Track Query": {
+                "main": [[{"node": "Get Recommendations", "type": "main", "index": 0}]]
             },
-            "获取推荐": {
-                "main": [[{"node": "返回推荐", "type": "main", "index": 0}]]
+            "Get Recommendations": {
+                "main": [[{"node": "Return Response", "type": "main", "index": 0}]]
             }
         },
-        "settings": {},
-        "staticData": None,
-        "tags": []
+        "settings": {}
     }
 
 

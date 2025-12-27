@@ -444,6 +444,9 @@ def record_feedback(
     feedback_value: Any = None,
     correction_text: str = None,
     retrieved_sources: List = None,
+    rating: int = None,
+    intent_type: str = None,
+    scenario_id: str = None,
     **kwargs,
 ) -> FeedbackRecord:
     """便捷函数：记录反馈（兼容多种调用方式）"""
@@ -467,12 +470,12 @@ def record_feedback(
         actual_feedback_type = feedback_type or FeedbackType.EXPLICIT_POSITIVE
     
     # 计算 rating
-    rating = kwargs.get("rating")
-    if rating is None and feedback_value is not None:
+    actual_rating = rating
+    if actual_rating is None and feedback_value is not None:
         if isinstance(feedback_value, bool):
-            rating = 5 if feedback_value else 1
+            actual_rating = 5 if feedback_value else 1
         elif isinstance(feedback_value, (int, float)):
-            rating = int(feedback_value)
+            actual_rating = int(feedback_value)
     
     return get_feedback_optimizer().record_feedback(
         conversation_id=conversation_id,
@@ -480,9 +483,10 @@ def record_feedback(
         query=actual_query,
         response=actual_response,
         message_id=message_id,
-        rating=rating,
+        rating=actual_rating,
         text=correction_text,
-        **kwargs,
+        intent_type=intent_type,
+        scenario_id=scenario_id,
     )
 
 

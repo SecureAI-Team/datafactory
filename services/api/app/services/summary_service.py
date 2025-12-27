@@ -35,7 +35,7 @@ class ConversationTurn:
 class Summary:
     """摘要结果"""
     summary_type: SummaryType
-    text: str
+    text: str = ""  # 添加默认值
     key_points: List[str] = field(default_factory=list)
     entities_mentioned: List[str] = field(default_factory=list)
     topics: List[str] = field(default_factory=list)

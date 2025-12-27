@@ -403,33 +403,42 @@ class KnowledgeGraphService:
         labels: List[str] = None,
         limit: int = 20,
     ) -> List[GraphNode]:
-        """全文搜索（需要创建全文索引）"""
+        """全文搜索"""
         nodes = []
-        labels = labels or ["Product", "Parameter", "Scenario"]
+        # 扩展搜索标签列表，包含所有可能的标签
+        labels = labels or ["Product", "Parameter", "Scenario", "Value", "Technology", "Solution", "Company", "Entity"]
         
         try:
             with self.session() as session:
                 # 在多个标签中搜索
                 for label in labels:
+                    # 只搜索 name 和 text 字段，description 可能不存在
                     cypher = f"""
                     MATCH (n:{label})
-                    WHERE n.name CONTAINS $query OR n.description CONTAINS $query
-                    RETURN n, elementId(n) as id
+                    WHERE toLower(n.name) CONTAINS toLower($query)
+                       OR toLower(coalesce(n.text, '')) CONTAINS toLower($query)
+                    RETURN n, elementId(n) as id, labels(n) as node_labels
                     LIMIT $limit
                     """
                     
-                    records = session.run(
-                        cypher,
-                        query=query_text,
-                        limit=limit // len(labels),
-                    )
-                    
-                    for record in records:
-                        nodes.append(GraphNode(
-                            node_id=record["id"],
-                            label=label,
-                            properties=dict(record["n"]),
-                        ))
+                    try:
+                        records = session.run(
+                            cypher,
+                            query=query_text,
+                            limit=limit // max(len(labels), 1),
+                        )
+                        
+                        for record in records:
+                            actual_labels = record.get("node_labels", [label])
+                            nodes.append(GraphNode(
+                                node_id=record["id"],
+                                label=actual_labels[0] if actual_labels else label,
+                                properties=dict(record["n"]),
+                            ))
+                    except Exception as label_error:
+                        # 某些标签可能不存在，忽略错误
+                        logger.debug(f"Search label {label} skipped: {label_error}")
+                        continue
                         
         except Exception as e:
             logger.error(f"Full text search failed: {e}")

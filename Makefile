@@ -63,6 +63,22 @@ user-sim:
 setup:
 	bash scripts/setup_services.sh
 
+# 创建 Budibase 应用模板
+setup-budibase:
+	@echo "=== 创建 Budibase 应用模板 ==="
+	@echo "请先设置 BUDIBASE_API_KEY 环境变量"
+	@echo "1. 访问 http://localhost:10000 登录 Budibase"
+	@echo "2. 进入 Settings -> API -> 生成 API Key"
+	@echo "3. 运行: BUDIBASE_API_KEY=your_key make setup-budibase-run"
+	@echo ""
+
+setup-budibase-run:
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work \
+		-e BUDIBASE_URL=http://budibase:10000 \
+		-e BUDIBASE_API_KEY=$(BUDIBASE_API_KEY) \
+		-e API_INTERNAL_URL=http://api:8000 \
+		api python scripts/setup_budibase_app.py
+
 # 验证 RAG 流程
 verify:
 	bash scripts/verify_rag.sh

@@ -61,6 +61,10 @@ class VisionService:
     @property
     def client(self) -> httpx.Client:
         if self._client is None:
+            if not self.api_key:
+                raise ValueError(
+                    "DASHSCOPE_API_KEY 未配置。请在环境变量中设置 DASHSCOPE_API_KEY"
+                )
             self._client = httpx.Client(
                 base_url=self.base_url,
                 headers={

@@ -1,13 +1,43 @@
 [
   {
+    "name": "File Upload Trigger Airflow",
+    "nodes": [
+      {
+        "parameters": {"httpMethod": "POST", "path": "file-uploaded", "responseMode": "lastNode"},
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "position": [250, 300]
+      },
+      {
+        "parameters": {
+          "url": "http://airflow:8080/api/v1/dags/ingest_to_bronze/dagRuns",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBasicAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "{\"conf\": {\"filename\": \"{{ $json.filename }}\", \"bucket\": \"{{ $json.bucket || 'uploads' }}\"}}"
+        },
+        "name": "Trigger Airflow DAG",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [450, 300]
+      },
+      {
+        "parameters": {"respondWith": "json", "responseBody": "={{ { \"status\": \"triggered\", \"dag_run\": $json } }}"},
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "position": [650, 300]
+      }
+    ],
+    "connections": {
+      "Webhook": {"main": [[{"node": "Trigger Airflow DAG", "type": "main", "index": 0}]]},
+      "Trigger Airflow DAG": {"main": [[{"node": "Respond", "type": "main", "index": 0}]]}
+    }
+  },
+  {
     "name": "Document Processing Notification",
     "nodes": [
       {
-        "parameters": {
-          "httpMethod": "POST",
-          "path": "document-processed",
-          "responseMode": "lastNode"
-        },
+        "parameters": {"httpMethod": "POST", "path": "document-processed", "responseMode": "lastNode"},
         "name": "Webhook",
         "type": "n8n-nodes-base.webhook",
         "position": [250, 300]
@@ -33,73 +63,143 @@
     }
   },
   {
-    "name": "Daily Feedback Analysis",
+    "name": "Pipeline Complete Notification",
     "nodes": [
       {
-        "parameters": {
-          "rule": {"interval": [{"field": "hours", "hoursInterval": 24}]}
-        },
-        "name": "Daily Trigger",
-        "type": "n8n-nodes-base.scheduleTrigger",
+        "parameters": {"httpMethod": "POST", "path": "pipeline-complete", "responseMode": "lastNode"},
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
         "position": [250, 300]
       },
       {
         "parameters": {
-          "url": "http://api:8000/v1/debug/feedback-report"
+          "functionCode": "const data = $input.first().json; return [{ json: { title: data.status === 'success' ? 'Pipeline Complete' : 'Pipeline Failed', dag: data.dag_id, status: data.status, timestamp: new Date().toISOString() }}];"
         },
-        "name": "Get Feedback Report",
+        "name": "Build Notification",
+        "type": "n8n-nodes-base.code",
+        "position": [450, 300]
+      }
+    ],
+    "connections": {
+      "Webhook": {"main": [[{"node": "Build Notification", "type": "main", "index": 0}]]}
+    }
+  },
+  {
+    "name": "Data Quality Alert",
+    "nodes": [
+      {
+        "parameters": {"httpMethod": "POST", "path": "dq-alert", "responseMode": "lastNode"},
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "position": [250, 300]
+      },
+      {
+        "parameters": {
+          "conditions": {"string": [{"value1": "={{ $json.status }}", "operation": "equals", "value2": "failed"}]}
+        },
+        "name": "Check Failed",
+        "type": "n8n-nodes-base.if",
+        "position": [450, 300]
+      },
+      {
+        "parameters": {
+          "functionCode": "return [{ json: { severity: 'high', title: 'DQ Check Failed', ku_id: $input.first().json.ku_id, timestamp: new Date().toISOString() }}];"
+        },
+        "name": "Build Alert",
+        "type": "n8n-nodes-base.code",
+        "position": [650, 200]
+      }
+    ],
+    "connections": {
+      "Webhook": {"main": [[{"node": "Check Failed", "type": "main", "index": 0}]]},
+      "Check Failed": {"main": [[{"node": "Build Alert", "type": "main", "index": 0}], []]}
+    }
+  },
+  {
+    "name": "Vision Analysis Pipeline",
+    "nodes": [
+      {
+        "parameters": {"httpMethod": "POST", "path": "analyze-image", "responseMode": "lastNode"},
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "position": [250, 300]
+      },
+      {
+        "parameters": {
+          "url": "http://api:8000/v1/vision/analyze-url",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {"name": "image_url", "value": "={{ $json.image_url }}"},
+              {"name": "question", "value": "={{ $json.question || 'Describe this image' }}"}
+            ]
+          }
+        },
+        "name": "Analyze Image",
         "type": "n8n-nodes-base.httpRequest",
         "position": [450, 300]
       },
       {
         "parameters": {
-          "conditions": {
-            "number": [{"value1": "={{ $json.health_score }}", "operation": "smaller", "value2": 70}]
+          "url": "http://api:8000/v1/kg/import",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {"name": "text", "value": "={{ 'Image analysis: ' + $json.analysis }}"},
+              {"name": "extract_relations", "value": "true"}
+            ]
           }
         },
-        "name": "Health Check",
-        "type": "n8n-nodes-base.if",
+        "name": "Import to KG",
+        "type": "n8n-nodes-base.httpRequest",
         "position": [650, 300]
       }
     ],
     "connections": {
-      "Daily Trigger": {"main": [[{"node": "Get Feedback Report", "type": "main", "index": 0}]]},
-      "Get Feedback Report": {"main": [[{"node": "Health Check", "type": "main", "index": 0}]]}
+      "Webhook": {"main": [[{"node": "Analyze Image", "type": "main", "index": 0}]]},
+      "Analyze Image": {"main": [[{"node": "Import to KG", "type": "main", "index": 0}]]}
     }
   },
   {
-    "name": "KG Stats Sync",
+    "name": "Auto Conversation Summary",
     "nodes": [
       {
-        "parameters": {
-          "rule": {"interval": [{"field": "hours", "hoursInterval": 6}]}
-        },
-        "name": "Every 6 Hours",
-        "type": "n8n-nodes-base.scheduleTrigger",
+        "parameters": {"httpMethod": "POST", "path": "conversation-long", "responseMode": "lastNode"},
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
         "position": [250, 300]
       },
       {
         "parameters": {
-          "url": "http://api:8000/v1/kg/stats"
+          "conditions": {"number": [{"value1": "={{ $json.turn_count }}", "operation": "largerEqual", "value2": 10}]}
         },
-        "name": "Get KG Stats",
-        "type": "n8n-nodes-base.httpRequest",
+        "name": "Check Long",
+        "type": "n8n-nodes-base.if",
         "position": [450, 300]
+      },
+      {
+        "parameters": {
+          "url": "http://api:8000/v1/summary/generate",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [{"name": "conversation_id", "value": "={{ $json.conversation_id }}"}]
+          }
+        },
+        "name": "Generate Summary",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [650, 200]
       }
     ],
     "connections": {
-      "Every 6 Hours": {"main": [[{"node": "Get KG Stats", "type": "main", "index": 0}]]}
+      "Webhook": {"main": [[{"node": "Check Long", "type": "main", "index": 0}]]},
+      "Check Long": {"main": [[{"node": "Generate Summary", "type": "main", "index": 0}], []]}
     }
   },
   {
     "name": "User Query Recommendation",
     "nodes": [
       {
-        "parameters": {
-          "httpMethod": "POST",
-          "path": "user-query",
-          "responseMode": "lastNode"
-        },
+        "parameters": {"httpMethod": "POST", "path": "user-query", "responseMode": "lastNode"},
         "name": "Webhook",
         "type": "n8n-nodes-base.webhook",
         "position": [250, 300]
@@ -121,9 +221,7 @@
         "position": [450, 300]
       },
       {
-        "parameters": {
-          "url": "http://api:8000/v1/recommend?user_id={{ $json.user_id }}&limit=5"
-        },
+        "parameters": {"url": "http://api:8000/v1/recommend?user_id={{ $json.user_id }}&limit=5"},
         "name": "Get Recommendations",
         "type": "n8n-nodes-base.httpRequest",
         "position": [650, 300]
@@ -132,6 +230,123 @@
     "connections": {
       "Webhook": {"main": [[{"node": "Track Query", "type": "main", "index": 0}]]},
       "Track Query": {"main": [[{"node": "Get Recommendations", "type": "main", "index": 0}]]}
+    }
+  },
+  {
+    "name": "Daily Feedback Analysis",
+    "nodes": [
+      {
+        "parameters": {"rule": {"interval": [{"field": "hours", "hoursInterval": 24}]}},
+        "name": "Daily Trigger",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "position": [250, 300]
+      },
+      {
+        "parameters": {"url": "http://api:8000/v1/debug/feedback-report"},
+        "name": "Get Feedback Report",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [450, 300]
+      },
+      {
+        "parameters": {
+          "conditions": {"number": [{"value1": "={{ $json.health_score }}", "operation": "smaller", "value2": 70}]}
+        },
+        "name": "Health Check",
+        "type": "n8n-nodes-base.if",
+        "position": [650, 300]
+      }
+    ],
+    "connections": {
+      "Daily Trigger": {"main": [[{"node": "Get Feedback Report", "type": "main", "index": 0}]]},
+      "Get Feedback Report": {"main": [[{"node": "Health Check", "type": "main", "index": 0}]]}
+    }
+  },
+  {
+    "name": "KG Stats Sync",
+    "nodes": [
+      {
+        "parameters": {"rule": {"interval": [{"field": "hours", "hoursInterval": 6}]}},
+        "name": "Every 6 Hours",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "position": [250, 300]
+      },
+      {
+        "parameters": {"url": "http://api:8000/v1/kg/stats"},
+        "name": "Get KG Stats",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [450, 300]
+      }
+    ],
+    "connections": {
+      "Every 6 Hours": {"main": [[{"node": "Get KG Stats", "type": "main", "index": 0}]]}
+    }
+  },
+  {
+    "name": "Weekly Prompt Optimization",
+    "nodes": [
+      {
+        "parameters": {"rule": {"interval": [{"field": "weeks", "weeksInterval": 1}]}},
+        "name": "Weekly Trigger",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "position": [250, 300]
+      },
+      {
+        "parameters": {"url": "http://api:8000/v1/debug/feedback-report"},
+        "name": "Get Feedback Stats",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [450, 300]
+      },
+      {
+        "parameters": {
+          "url": "http://api:8000/v1/debug/optimize-prompts",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "{\"auto_apply\": false}"
+        },
+        "name": "Generate Optimization",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [650, 300]
+      }
+    ],
+    "connections": {
+      "Weekly Trigger": {"main": [[{"node": "Get Feedback Stats", "type": "main", "index": 0}]]},
+      "Get Feedback Stats": {"main": [[{"node": "Generate Optimization", "type": "main", "index": 0}]]}
+    }
+  },
+  {
+    "name": "System Health Check",
+    "nodes": [
+      {
+        "parameters": {"rule": {"interval": [{"field": "minutes", "minutesInterval": 30}]}},
+        "name": "Every 30 Minutes",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "position": [250, 300]
+      },
+      {
+        "parameters": {"url": "http://api:8000/health", "options": {"timeout": 10000}},
+        "name": "Check API",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [450, 300]
+      },
+      {
+        "parameters": {"url": "http://api:8000/v1/kg/stats", "options": {"timeout": 10000}},
+        "name": "Check KG",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [650, 300]
+      },
+      {
+        "parameters": {
+          "functionCode": "const api = $input.all()[0]?.json || {}; const kg = $input.all()[1]?.json || {}; return [{ json: { timestamp: new Date().toISOString(), api_status: api.status || 'unknown', kg_nodes: kg.total_nodes || 0, overall: api.status === 'healthy' ? 'healthy' : 'degraded' }}];"
+        },
+        "name": "Aggregate Status",
+        "type": "n8n-nodes-base.code",
+        "position": [850, 300]
+      }
+    ],
+    "connections": {
+      "Every 30 Minutes": {"main": [[{"node": "Check API", "type": "main", "index": 0}]]},
+      "Check API": {"main": [[{"node": "Check KG", "type": "main", "index": 0}]]},
+      "Check KG": {"main": [[{"node": "Aggregate Status", "type": "main", "index": 0}]]}
     }
   }
 ]

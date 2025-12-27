@@ -245,6 +245,72 @@ def get_kg_sync_workflow():
     }
 
 
+def get_file_upload_trigger_airflow_workflow():
+    """文件上传触发 Airflow 工作流"""
+    # Airflow 服务地址（从 n8n 容器视角）
+    airflow_url = os.getenv("AIRFLOW_URL", "http://airflow:8080")
+    airflow_user = os.getenv("AIRFLOW_USER", "admin")
+    airflow_pass = os.getenv("AIRFLOW_PASSWORD", "admin")
+    
+    return {
+        "name": "File Upload Trigger Airflow",
+        "nodes": [
+            {
+                "parameters": {
+                    "httpMethod": "POST",
+                    "path": "file-uploaded",
+                    "responseMode": "responseNode",
+                    "options": {}
+                },
+                "id": "webhook-upload",
+                "name": "Webhook",
+                "type": "n8n-nodes-base.webhook",
+                "typeVersion": 1,
+                "position": [250, 300]
+            },
+            {
+                "parameters": {
+                    "url": f"{airflow_url}/api/v1/dags/ingest_to_bronze/dagRuns",
+                    "authentication": "genericCredentialType",
+                    "genericAuthType": "httpBasicAuth",
+                    "sendBody": True,
+                    "specifyBody": "json",
+                    "jsonBody": '={"conf": {"filename": "{{ $json.filename }}", "bucket": "{{ $json.bucket || \'uploads\' }}"}}',
+                    "options": {
+                        "timeout": 30000
+                    }
+                },
+                "id": "http-airflow",
+                "name": "Trigger Airflow DAG",
+                "type": "n8n-nodes-base.httpRequest",
+                "typeVersion": 3,
+                "position": [450, 300],
+                "credentials": {}
+            },
+            {
+                "parameters": {
+                    "respondWith": "json",
+                    "responseBody": "={{ { \"status\": \"triggered\", \"dag_run\": $json } }}"
+                },
+                "id": "respond-upload",
+                "name": "Respond to Webhook",
+                "type": "n8n-nodes-base.respondToWebhook",
+                "typeVersion": 1,
+                "position": [650, 300]
+            }
+        ],
+        "connections": {
+            "Webhook": {
+                "main": [[{"node": "Trigger Airflow DAG", "type": "main", "index": 0}]]
+            },
+            "Trigger Airflow DAG": {
+                "main": [[{"node": "Respond to Webhook", "type": "main", "index": 0}]]
+            }
+        },
+        "settings": {}
+    }
+
+
 def get_recommendation_workflow():
     """推荐触发工作流"""
     return {
@@ -326,6 +392,523 @@ def get_recommendation_workflow():
     }
 
 
+def get_pipeline_complete_notification_workflow():
+    """Pipeline 完成通知工作流"""
+    return {
+        "name": "Pipeline Complete Notification",
+        "nodes": [
+            {
+                "parameters": {
+                    "httpMethod": "POST",
+                    "path": "pipeline-complete",
+                    "responseMode": "responseNode",
+                    "options": {}
+                },
+                "id": "webhook-pipeline",
+                "name": "Webhook",
+                "type": "n8n-nodes-base.webhook",
+                "typeVersion": 1,
+                "position": [250, 300]
+            },
+            {
+                "parameters": {
+                    "functionCode": """
+const data = $input.first().json;
+const status = data.status || 'unknown';
+const dagId = data.dag_id || 'unknown';
+const runId = data.run_id || 'unknown';
+const duration = data.duration || 0;
+
+// 构建通知消息
+const message = {
+    title: status === 'success' ? '✅ Pipeline 完成' : '❌ Pipeline 失败',
+    dag: dagId,
+    run_id: runId,
+    status: status,
+    duration_seconds: duration,
+    timestamp: new Date().toISOString()
+};
+
+// 这里可以扩展：发送邮件、Slack、钉钉等
+console.log('Pipeline notification:', JSON.stringify(message));
+
+return [{ json: message }];
+"""
+                },
+                "id": "code-pipeline",
+                "name": "Build Notification",
+                "type": "n8n-nodes-base.code",
+                "typeVersion": 1,
+                "position": [450, 300]
+            },
+            {
+                "parameters": {
+                    "respondWith": "json",
+                    "responseBody": "={{ $json }}"
+                },
+                "id": "respond-pipeline",
+                "name": "Respond",
+                "type": "n8n-nodes-base.respondToWebhook",
+                "typeVersion": 1,
+                "position": [650, 300]
+            }
+        ],
+        "connections": {
+            "Webhook": {
+                "main": [[{"node": "Build Notification", "type": "main", "index": 0}]]
+            },
+            "Build Notification": {
+                "main": [[{"node": "Respond", "type": "main", "index": 0}]]
+            }
+        },
+        "settings": {}
+    }
+
+
+def get_dq_alert_workflow():
+    """数据质量告警工作流"""
+    return {
+        "name": "Data Quality Alert",
+        "nodes": [
+            {
+                "parameters": {
+                    "httpMethod": "POST",
+                    "path": "dq-alert",
+                    "responseMode": "responseNode",
+                    "options": {}
+                },
+                "id": "webhook-dq",
+                "name": "Webhook",
+                "type": "n8n-nodes-base.webhook",
+                "typeVersion": 1,
+                "position": [250, 300]
+            },
+            {
+                "parameters": {
+                    "conditions": {
+                        "string": [
+                            {
+                                "value1": "={{ $json.status }}",
+                                "operation": "equals",
+                                "value2": "failed"
+                            }
+                        ]
+                    }
+                },
+                "id": "if-dq",
+                "name": "Check Failed",
+                "type": "n8n-nodes-base.if",
+                "typeVersion": 1,
+                "position": [450, 300]
+            },
+            {
+                "parameters": {
+                    "functionCode": """
+const data = $input.first().json;
+const alert = {
+    severity: 'high',
+    title: '🚨 数据质量检查失败',
+    ku_id: data.ku_id || 'unknown',
+    checks_failed: data.failed_checks || [],
+    timestamp: new Date().toISOString(),
+    action_required: '请检查并修复数据质量问题'
+};
+
+console.log('DQ Alert:', JSON.stringify(alert));
+return [{ json: alert }];
+"""
+                },
+                "id": "code-dq",
+                "name": "Build Alert",
+                "type": "n8n-nodes-base.code",
+                "typeVersion": 1,
+                "position": [650, 200]
+            },
+            {
+                "parameters": {
+                    "respondWith": "json",
+                    "responseBody": "={{ { \"alert_sent\": true, \"details\": $json } }}"
+                },
+                "id": "respond-dq-alert",
+                "name": "Respond Alert",
+                "type": "n8n-nodes-base.respondToWebhook",
+                "typeVersion": 1,
+                "position": [850, 200]
+            },
+            {
+                "parameters": {
+                    "respondWith": "json",
+                    "responseBody": "={{ { \"alert_sent\": false, \"reason\": \"check passed\" } }}"
+                },
+                "id": "respond-dq-ok",
+                "name": "Respond OK",
+                "type": "n8n-nodes-base.respondToWebhook",
+                "typeVersion": 1,
+                "position": [650, 400]
+            }
+        ],
+        "connections": {
+            "Webhook": {
+                "main": [[{"node": "Check Failed", "type": "main", "index": 0}]]
+            },
+            "Check Failed": {
+                "main": [
+                    [{"node": "Build Alert", "type": "main", "index": 0}],
+                    [{"node": "Respond OK", "type": "main", "index": 0}]
+                ]
+            },
+            "Build Alert": {
+                "main": [[{"node": "Respond Alert", "type": "main", "index": 0}]]
+            }
+        },
+        "settings": {}
+    }
+
+
+def get_prompt_optimization_workflow():
+    """Prompt 优化执行工作流"""
+    return {
+        "name": "Weekly Prompt Optimization",
+        "nodes": [
+            {
+                "parameters": {
+                    "rule": {
+                        "interval": [{"field": "weeks", "weeksInterval": 1}]
+                    }
+                },
+                "id": "schedule-prompt",
+                "name": "Weekly Trigger",
+                "type": "n8n-nodes-base.scheduleTrigger",
+                "typeVersion": 1,
+                "position": [250, 300]
+            },
+            {
+                "parameters": {
+                    "url": f"{API_URL}/v1/debug/feedback-report",
+                    "options": {}
+                },
+                "id": "http-feedback",
+                "name": "Get Feedback Stats",
+                "type": "n8n-nodes-base.httpRequest",
+                "typeVersion": 3,
+                "position": [450, 300]
+            },
+            {
+                "parameters": {
+                    "url": f"{API_URL}/v1/debug/optimize-prompts",
+                    "sendBody": True,
+                    "specifyBody": "json",
+                    "jsonBody": '{"auto_apply": false}',
+                    "options": {}
+                },
+                "id": "http-optimize",
+                "name": "Generate Optimization",
+                "type": "n8n-nodes-base.httpRequest",
+                "typeVersion": 3,
+                "position": [650, 300]
+            },
+            {
+                "parameters": {
+                    "functionCode": """
+const feedback = $input.all()[0].json;
+const optimization = $input.all()[1]?.json || {};
+
+const report = {
+    timestamp: new Date().toISOString(),
+    feedback_summary: {
+        total: feedback.total_feedbacks || 0,
+        positive_rate: feedback.positive_rate || 0,
+        health_score: feedback.health_score || 0
+    },
+    optimization_suggestions: optimization.suggestions || [],
+    new_examples: optimization.new_examples || []
+};
+
+console.log('Weekly optimization report:', JSON.stringify(report));
+return [{ json: report }];
+"""
+                },
+                "id": "code-report",
+                "name": "Build Report",
+                "type": "n8n-nodes-base.code",
+                "typeVersion": 1,
+                "position": [850, 300]
+            }
+        ],
+        "connections": {
+            "Weekly Trigger": {
+                "main": [[{"node": "Get Feedback Stats", "type": "main", "index": 0}]]
+            },
+            "Get Feedback Stats": {
+                "main": [[{"node": "Generate Optimization", "type": "main", "index": 0}]]
+            },
+            "Generate Optimization": {
+                "main": [[{"node": "Build Report", "type": "main", "index": 0}]]
+            }
+        },
+        "settings": {}
+    }
+
+
+def get_conversation_summary_workflow():
+    """长对话自动摘要工作流"""
+    return {
+        "name": "Auto Conversation Summary",
+        "nodes": [
+            {
+                "parameters": {
+                    "httpMethod": "POST",
+                    "path": "conversation-long",
+                    "responseMode": "responseNode",
+                    "options": {}
+                },
+                "id": "webhook-conv",
+                "name": "Webhook",
+                "type": "n8n-nodes-base.webhook",
+                "typeVersion": 1,
+                "position": [250, 300]
+            },
+            {
+                "parameters": {
+                    "conditions": {
+                        "number": [
+                            {
+                                "value1": "={{ $json.turn_count }}",
+                                "operation": "largerEqual",
+                                "value2": 10
+                            }
+                        ]
+                    }
+                },
+                "id": "if-long",
+                "name": "Check Long Conversation",
+                "type": "n8n-nodes-base.if",
+                "typeVersion": 1,
+                "position": [450, 300]
+            },
+            {
+                "parameters": {
+                    "url": f"{API_URL}/v1/summary/generate",
+                    "sendBody": True,
+                    "bodyParameters": {
+                        "parameters": [
+                            {"name": "conversation_id", "value": "={{ $json.conversation_id }}"}
+                        ]
+                    },
+                    "options": {}
+                },
+                "id": "http-summary",
+                "name": "Generate Summary",
+                "type": "n8n-nodes-base.httpRequest",
+                "typeVersion": 3,
+                "position": [650, 200]
+            },
+            {
+                "parameters": {
+                    "respondWith": "json",
+                    "responseBody": "={{ { \"summary_generated\": true, \"summary\": $json } }}"
+                },
+                "id": "respond-summary",
+                "name": "Respond Summary",
+                "type": "n8n-nodes-base.respondToWebhook",
+                "typeVersion": 1,
+                "position": [850, 200]
+            },
+            {
+                "parameters": {
+                    "respondWith": "json",
+                    "responseBody": "={{ { \"summary_generated\": false, \"reason\": \"conversation too short\" } }}"
+                },
+                "id": "respond-skip",
+                "name": "Respond Skip",
+                "type": "n8n-nodes-base.respondToWebhook",
+                "typeVersion": 1,
+                "position": [650, 400]
+            }
+        ],
+        "connections": {
+            "Webhook": {
+                "main": [[{"node": "Check Long Conversation", "type": "main", "index": 0}]]
+            },
+            "Check Long Conversation": {
+                "main": [
+                    [{"node": "Generate Summary", "type": "main", "index": 0}],
+                    [{"node": "Respond Skip", "type": "main", "index": 0}]
+                ]
+            },
+            "Generate Summary": {
+                "main": [[{"node": "Respond Summary", "type": "main", "index": 0}]]
+            }
+        },
+        "settings": {}
+    }
+
+
+def get_vision_analysis_workflow():
+    """图片分析处理工作流"""
+    return {
+        "name": "Vision Analysis Pipeline",
+        "nodes": [
+            {
+                "parameters": {
+                    "httpMethod": "POST",
+                    "path": "analyze-image",
+                    "responseMode": "responseNode",
+                    "options": {}
+                },
+                "id": "webhook-vision",
+                "name": "Webhook",
+                "type": "n8n-nodes-base.webhook",
+                "typeVersion": 1,
+                "position": [250, 300]
+            },
+            {
+                "parameters": {
+                    "url": f"{API_URL}/v1/vision/analyze-url",
+                    "sendBody": True,
+                    "bodyParameters": {
+                        "parameters": [
+                            {"name": "image_url", "value": "={{ $json.image_url }}"},
+                            {"name": "question", "value": "={{ $json.question || '描述这张图片的内容' }}"}
+                        ]
+                    },
+                    "options": {}
+                },
+                "id": "http-vision",
+                "name": "Analyze Image",
+                "type": "n8n-nodes-base.httpRequest",
+                "typeVersion": 3,
+                "position": [450, 300]
+            },
+            {
+                "parameters": {
+                    "url": f"{API_URL}/v1/kg/import",
+                    "sendBody": True,
+                    "bodyParameters": {
+                        "parameters": [
+                            {"name": "text", "value": "={{ 'Image analysis: ' + $json.analysis }}"},
+                            {"name": "extract_relations", "value": "true"}
+                        ]
+                    },
+                    "options": {}
+                },
+                "id": "http-kg-import",
+                "name": "Import to KG",
+                "type": "n8n-nodes-base.httpRequest",
+                "typeVersion": 3,
+                "position": [650, 300]
+            },
+            {
+                "parameters": {
+                    "respondWith": "json",
+                    "responseBody": "={{ { \"analysis\": $input.all()[0].json, \"kg_import\": $json } }}"
+                },
+                "id": "respond-vision",
+                "name": "Respond",
+                "type": "n8n-nodes-base.respondToWebhook",
+                "typeVersion": 1,
+                "position": [850, 300]
+            }
+        ],
+        "connections": {
+            "Webhook": {
+                "main": [[{"node": "Analyze Image", "type": "main", "index": 0}]]
+            },
+            "Analyze Image": {
+                "main": [[{"node": "Import to KG", "type": "main", "index": 0}]]
+            },
+            "Import to KG": {
+                "main": [[{"node": "Respond", "type": "main", "index": 0}]]
+            }
+        },
+        "settings": {}
+    }
+
+
+def get_system_health_check_workflow():
+    """系统健康检查工作流"""
+    return {
+        "name": "System Health Check",
+        "nodes": [
+            {
+                "parameters": {
+                    "rule": {
+                        "interval": [{"field": "minutes", "minutesInterval": 30}]
+                    }
+                },
+                "id": "schedule-health",
+                "name": "Every 30 Minutes",
+                "type": "n8n-nodes-base.scheduleTrigger",
+                "typeVersion": 1,
+                "position": [250, 300]
+            },
+            {
+                "parameters": {
+                    "url": f"{API_URL}/health",
+                    "options": {"timeout": 10000}
+                },
+                "id": "http-api-health",
+                "name": "Check API",
+                "type": "n8n-nodes-base.httpRequest",
+                "typeVersion": 3,
+                "position": [450, 300]
+            },
+            {
+                "parameters": {
+                    "url": f"{API_URL}/v1/kg/stats",
+                    "options": {"timeout": 10000}
+                },
+                "id": "http-kg-health",
+                "name": "Check KG",
+                "type": "n8n-nodes-base.httpRequest",
+                "typeVersion": 3,
+                "position": [650, 300]
+            },
+            {
+                "parameters": {
+                    "functionCode": """
+const apiHealth = $input.all()[0]?.json || {};
+const kgHealth = $input.all()[1]?.json || {};
+
+const status = {
+    timestamp: new Date().toISOString(),
+    api: apiHealth.status || 'unknown',
+    kg_nodes: kgHealth.total_nodes || 0,
+    kg_edges: kgHealth.total_edges || 0,
+    overall: 'healthy'
+};
+
+if (apiHealth.status !== 'healthy') {
+    status.overall = 'degraded';
+    console.log('ALERT: API unhealthy');
+}
+
+console.log('Health check:', JSON.stringify(status));
+return [{ json: status }];
+"""
+                },
+                "id": "code-health",
+                "name": "Aggregate Status",
+                "type": "n8n-nodes-base.code",
+                "typeVersion": 1,
+                "position": [850, 300]
+            }
+        ],
+        "connections": {
+            "Every 30 Minutes": {
+                "main": [[{"node": "Check API", "type": "main", "index": 0}]]
+            },
+            "Check API": {
+                "main": [[{"node": "Check KG", "type": "main", "index": 0}]]
+            },
+            "Check KG": {
+                "main": [[{"node": "Aggregate Status", "type": "main", "index": 0}]]
+            }
+        },
+        "settings": {}
+    }
+
+
 def main():
     print("=" * 60)
     print("n8n 工作流自动创建")
@@ -360,10 +943,22 @@ def main():
         return
     
     workflows = [
+        # 核心 Pipeline 工作流
+        ("文件上传触发Airflow", get_file_upload_trigger_airflow_workflow()),
         ("文档处理通知", get_document_processing_workflow()),
+        ("Pipeline完成通知", get_pipeline_complete_notification_workflow()),
+        ("数据质量告警", get_dq_alert_workflow()),
+        
+        # 智能分析工作流
+        ("图片分析Pipeline", get_vision_analysis_workflow()),
+        ("长对话自动摘要", get_conversation_summary_workflow()),
+        ("用户推荐", get_recommendation_workflow()),
+        
+        # 定时任务工作流
         ("反馈分析报告", get_feedback_analysis_workflow()),
         ("知识图谱同步", get_kg_sync_workflow()),
-        ("用户推荐", get_recommendation_workflow()),
+        ("Prompt周优化", get_prompt_optimization_workflow()),
+        ("系统健康检查", get_system_health_check_workflow()),
     ]
     
     created_count = 0
@@ -397,8 +992,13 @@ def main():
 3. 测试 Webhook 端点
 
 Webhook 端点:
-  - 文档处理: POST {N8N_URL}/webhook/document-processed
-  - 用户查询: POST {N8N_URL}/webhook/user-query
+  - 文件上传:     POST {N8N_URL}/webhook/file-uploaded
+  - 文档处理:     POST {N8N_URL}/webhook/document-processed
+  - Pipeline完成: POST {N8N_URL}/webhook/pipeline-complete
+  - 数据质量:     POST {N8N_URL}/webhook/dq-alert
+  - 图片分析:     POST {N8N_URL}/webhook/analyze-image
+  - 长对话摘要:   POST {N8N_URL}/webhook/conversation-long
+  - 用户查询:     POST {N8N_URL}/webhook/user-query
 """)
 
 

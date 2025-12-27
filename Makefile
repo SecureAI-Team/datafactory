@@ -137,28 +137,31 @@ setup-openmetadata:
 
 # ==================== MinIO 事件通知设置 ====================
 
+# mc 命令使用 minio/mc 镜像
+MC_CMD = docker run --rm --network datafactory_default minio/mc
+
 setup-minio-events:
 	@echo "=== MinIO 事件通知配置 ==="
 	@echo ""
-	@echo "步骤 1: 配置 webhook 目标..."
-	-$(COMPOSE) exec -T minio mc alias set adf http://localhost:9000 $(MINIO_ROOT_USER) $(MINIO_ROOT_PASSWORD) 2>/dev/null || true
+	@echo "步骤 1: 配置 mc alias..."
+	$(MC_CMD) alias set adf http://minio:9000 $(MINIO_ROOT_USER) $(MINIO_ROOT_PASSWORD)
 	@echo ""
 	@echo "步骤 2: 添加 n8n webhook 配置..."
-	-$(COMPOSE) exec -T minio mc admin config set adf notify_webhook:n8n endpoint="http://n8n:5678/webhook/file-uploaded" queue_limit="10000" 2>/dev/null || echo "  (需要重启生效)"
+	-$(MC_CMD) admin config set adf notify_webhook:n8n endpoint="http://n8n:5678/webhook/file-uploaded" queue_limit="10000" || echo "  (配置可能已存在)"
 	@echo ""
-	@echo "步骤 3: 重启 MinIO 服务..."
+	@echo "步骤 3: 重启 MinIO 服务使配置生效..."
 	$(COMPOSE) restart minio
 	@echo "  等待 MinIO 启动..."
-	@sleep 5
+	@sleep 8
 	@echo ""
 	@echo "步骤 4: 重新配置 alias..."
-	-$(COMPOSE) exec -T minio mc alias set adf http://localhost:9000 $(MINIO_ROOT_USER) $(MINIO_ROOT_PASSWORD)
+	$(MC_CMD) alias set adf http://minio:9000 $(MINIO_ROOT_USER) $(MINIO_ROOT_PASSWORD)
 	@echo ""
 	@echo "步骤 5: 为 uploads bucket 添加事件通知..."
-	-$(COMPOSE) exec -T minio mc event add adf/uploads arn:minio:sqs::n8n:webhook --event put --suffix ".pdf,.docx,.doc,.txt,.md,.pptx,.xlsx" 2>/dev/null || echo "  事件可能已存在"
+	-$(MC_CMD) event add adf/uploads arn:minio:sqs::n8n:webhook --event put --suffix ".pdf,.docx,.doc,.txt,.md,.pptx,.xlsx" || echo "  事件可能已存在"
 	@echo ""
 	@echo "步骤 6: 验证配置..."
-	$(COMPOSE) exec -T minio mc event list adf/uploads
+	$(MC_CMD) event list adf/uploads
 	@echo ""
 	@echo "============================================================"
 	@echo "✓ MinIO 事件通知配置完成!"

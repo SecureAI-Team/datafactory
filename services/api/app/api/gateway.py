@@ -802,3 +802,137 @@ async def debug_record_feedback(body: dict):
         "feedback_type": record.feedback_type.value,
         "recorded_at": record.created_at,
     }
+
+
+# ==================== Phase 3: 结构化参数调试接口 ====================
+
+@router.post("/debug/extract-params")
+async def debug_extract_params(body: dict):
+    """调试接口：测试参数提取"""
+    from ..services.param_extractor import extract_params, extract_param_requirements
+    
+    query = body.get("query", "")
+    
+    params = extract_params(query)
+    requirements = extract_param_requirements(query)
+    
+    return {
+        "query": query,
+        "params": [p.to_dict() for p in params],
+        "requirements": requirements,
+    }
+
+
+@router.post("/debug/smart-search")
+async def debug_smart_search(body: dict):
+    """调试接口：智能搜索"""
+    from ..services.retrieval import smart_search
+    
+    query = body.get("query", "")
+    top_k = body.get("top_k", 5)
+    
+    result = smart_search(query, top_k=top_k)
+    
+    return {
+        "query": query,
+        "strategy": result["strategy"],
+        "intent": result["intent"],
+        "extracted_params": result["extracted_params"],
+        "total": result["total"],
+        "hits": [
+            {
+                "id": h["id"],
+                "title": h["title"],
+                "score": h["score"],
+                "matched_params": h.get("matched_params", []),
+            }
+            for h in result["hits"]
+        ],
+    }
+
+
+@router.post("/debug/search-by-params")
+async def debug_search_by_params(body: dict):
+    """调试接口：参数化搜索"""
+    from ..services.retrieval import search_by_params
+    
+    param_name = body.get("param_name", "")
+    min_value = body.get("min_value")
+    max_value = body.get("max_value")
+    exact_value = body.get("exact_value")
+    scenario_id = body.get("scenario_id")
+    top_k = body.get("top_k", 10)
+    
+    hits = search_by_params(
+        param_name=param_name,
+        min_value=min_value,
+        max_value=max_value,
+        exact_value=exact_value,
+        scenario_id=scenario_id,
+        top_k=top_k,
+    )
+    
+    return {
+        "param_name": param_name,
+        "filter": {
+            "min_value": min_value,
+            "max_value": max_value,
+            "exact_value": exact_value,
+        },
+        "total": len(hits),
+        "hits": [
+            {
+                "id": h["id"],
+                "title": h["title"],
+                "score": h["score"],
+                "params": h.get("params", []),
+            }
+            for h in hits
+        ],
+    }
+
+
+@router.post("/debug/compare-specs")
+async def debug_compare_specs(body: dict):
+    """调试接口：规格比对"""
+    from ..services.calculation_engine import compare_specs, format_comparison_for_chat
+    
+    products = body.get("products", [])
+    param_names = body.get("param_names")
+    
+    result = compare_specs(products, param_names)
+    
+    return {
+        "success": result.success,
+        "products": result.products,
+        "comparison_table": result.comparison_table,
+        "summary": result.summary,
+        "recommendation": result.recommendation,
+        "formatted": format_comparison_for_chat(result),
+    }
+
+
+@router.post("/debug/calculate-enhanced")
+async def debug_calculate_enhanced(body: dict):
+    """调试接口：增强计算（自动参数提取）"""
+    from ..services.calculation_engine import calculate_with_extraction, format_calculation_for_chat
+    
+    query = body.get("query", "")
+    context_params = body.get("context_params", {})
+    
+    result = calculate_with_extraction(query, context_params)
+    
+    if result:
+        return {
+            "success": result.success,
+            "calculation_type": result.calculation_type.value,
+            "result_value": result.result_value,
+            "result_unit": result.result_unit,
+            "result_text": result.result_text,
+            "reasoning": result.reasoning,
+            "inputs_used": result.inputs_used,
+            "missing_inputs": result.missing_inputs,
+            "formatted": format_calculation_for_chat(result),
+        }
+    else:
+        return {"success": False, "message": "未检测到计算需求"}

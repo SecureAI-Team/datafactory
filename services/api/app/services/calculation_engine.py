@@ -576,9 +576,193 @@ class CalculationEngine:
         return "\n".join(lines)
 
 
+# ==================== 规格比对功能 ====================
+
+@dataclass
+class ComparisonItem:
+    """比对项"""
+    name: str
+    value: Any
+    unit: str = ""
+    better_direction: str = "higher"  # higher/lower/neutral
+
+
+@dataclass
+class ComparisonResult:
+    """比对结果"""
+    success: bool
+    products: List[Dict] = field(default_factory=list)
+    comparison_table: Dict[str, Dict] = field(default_factory=dict)
+    summary: str = ""
+    recommendation: str = ""
+
+
+class SpecComparator:
+    """规格比对器"""
+    
+    # 参数比较方向（higher=越高越好，lower=越低越好）
+    PARAM_DIRECTIONS = {
+        "power": "lower",         # 功耗越低越好
+        "precision": "lower",     # 精度越小越好
+        "capacity": "higher",     # 产能越高越好
+        "speed": "higher",        # 速度越高越好
+        "price": "lower",         # 价格越低越好
+        "cost": "lower",          # 成本越低越好
+        "resolution": "higher",   # 分辨率越高越好
+        "fov": "higher",          # 视野越大越好
+        "weight": "lower",        # 重量越轻越好
+        "accuracy": "higher",     # 准确度越高越好
+    }
+    
+    def compare(
+        self,
+        products: List[Dict],
+        param_names: List[str] = None,
+        weights: Dict[str, float] = None,
+    ) -> ComparisonResult:
+        """
+        比较多个产品/方案的规格
+        
+        Args:
+            products: 产品列表，每个产品包含 name 和 params
+            param_names: 要比较的参数列表
+            weights: 参数权重
+        
+        Returns:
+            ComparisonResult
+        """
+        if len(products) < 2:
+            return ComparisonResult(
+                success=False,
+                summary="需要至少两个产品进行比对",
+            )
+        
+        weights = weights or {}
+        
+        # 收集所有参数
+        all_params = set()
+        for prod in products:
+            for param in prod.get("params", []):
+                all_params.add(param.get("name", ""))
+        
+        if param_names:
+            all_params = all_params.intersection(set(param_names))
+        
+        # 构建比对表
+        comparison_table = {}
+        scores = {prod["name"]: 0 for prod in products}
+        
+        for param_name in all_params:
+            comparison_table[param_name] = {}
+            values = []
+            
+            for prod in products:
+                prod_name = prod["name"]
+                param_value = None
+                param_unit = ""
+                
+                for param in prod.get("params", []):
+                    if param.get("name") == param_name:
+                        param_value = param.get("value")
+                        param_unit = param.get("unit", "")
+                        break
+                
+                comparison_table[param_name][prod_name] = {
+                    "value": param_value,
+                    "unit": param_unit,
+                }
+                
+                if param_value is not None:
+                    values.append((prod_name, param_value))
+            
+            # 确定最佳值
+            if values:
+                direction = self.PARAM_DIRECTIONS.get(param_name, "higher")
+                sorted_values = sorted(values, key=lambda x: x[1], reverse=(direction == "higher"))
+                best_prod = sorted_values[0][0]
+                worst_prod = sorted_values[-1][0]
+                
+                comparison_table[param_name]["_best"] = best_prod
+                comparison_table[param_name]["_worst"] = worst_prod
+                comparison_table[param_name]["_direction"] = direction
+                
+                # 更新分数
+                weight = weights.get(param_name, 1.0)
+                scores[best_prod] += weight
+                if len(sorted_values) > 1:
+                    scores[worst_prod] -= weight * 0.5
+        
+        # 生成摘要
+        winner = max(scores.items(), key=lambda x: x[1])[0]
+        
+        summary_parts = []
+        for param_name, data in comparison_table.items():
+            best = data.get("_best")
+            direction = data.get("_direction", "higher")
+            if best:
+                direction_text = "最高" if direction == "higher" else "最低"
+                best_value = data.get(best, {}).get("value")
+                unit = data.get(best, {}).get("unit", "")
+                summary_parts.append(f"- **{param_name}**: {best} {direction_text} ({best_value}{unit})")
+        
+        summary = "\n".join(summary_parts)
+        recommendation = f"综合比较，**{winner}** 在多项指标上表现更优"
+        
+        return ComparisonResult(
+            success=True,
+            products=[{"name": p["name"], "score": scores[p["name"]]} for p in products],
+            comparison_table=comparison_table,
+            summary=summary,
+            recommendation=recommendation,
+        )
+    
+    def format_comparison_response(self, result: ComparisonResult) -> str:
+        """格式化比对响应"""
+        if not result.success:
+            return result.summary
+        
+        lines = ["### 📊 规格比对\n"]
+        
+        # 比对表（Markdown）
+        if result.products and result.comparison_table:
+            # 表头
+            prod_names = [p["name"] for p in result.products]
+            header = "| 参数 | " + " | ".join(prod_names) + " |"
+            separator = "|" + "|".join(["---"] * (len(prod_names) + 1)) + "|"
+            lines.append(header)
+            lines.append(separator)
+            
+            # 数据行
+            for param_name, data in result.comparison_table.items():
+                row = f"| {param_name} |"
+                best = data.get("_best")
+                for prod_name in prod_names:
+                    cell_data = data.get(prod_name, {})
+                    value = cell_data.get("value", "-")
+                    unit = cell_data.get("unit", "")
+                    cell = f" {value}{unit}"
+                    if prod_name == best:
+                        cell = f" **{value}{unit}** ✓"
+                    row += cell + " |"
+                lines.append(row)
+            
+            lines.append("")
+        
+        if result.summary:
+            lines.append("**各项最优**：")
+            lines.append(result.summary)
+            lines.append("")
+        
+        if result.recommendation:
+            lines.append(f"**结论**：{result.recommendation}")
+        
+        return "\n".join(lines)
+
+
 # ==================== 模块级便捷函数 ====================
 
 _default_engine: Optional[CalculationEngine] = None
+_default_comparator: Optional[SpecComparator] = None
 
 
 def get_calculation_engine() -> CalculationEngine:
@@ -587,6 +771,14 @@ def get_calculation_engine() -> CalculationEngine:
     if _default_engine is None:
         _default_engine = CalculationEngine()
     return _default_engine
+
+
+def get_spec_comparator() -> SpecComparator:
+    """获取规格比对器实例"""
+    global _default_comparator
+    if _default_comparator is None:
+        _default_comparator = SpecComparator()
+    return _default_comparator
 
 
 def try_calculate(
@@ -598,4 +790,54 @@ def try_calculate(
     """便捷函数：尝试执行计算"""
     engine = get_calculation_engine()
     return engine.calculate(query, entities, context_params, retrieved_params)
+
+
+def calculate_with_extraction(
+    query: str,
+    context_params: Dict[str, Any] = None,
+    retrieved_params: List[Dict] = None,
+) -> Optional[CalculationResult]:
+    """
+    便捷函数：自动提取参数并执行计算
+    
+    从查询中自动提取参数，然后尝试执行计算
+    """
+    from .param_extractor import extract_params
+    
+    # 提取参数
+    extracted = extract_params(query)
+    
+    # 转换为 entities 格式
+    entities = {}
+    for param in extracted:
+        entities[param.canonical_name] = {
+            "value": param.value,
+            "unit": param.unit,
+            "operator": param.operator.value,
+        }
+        # 也添加中文名
+        entities[param.name] = entities[param.canonical_name]
+    
+    return try_calculate(query, entities, context_params, retrieved_params)
+
+
+def compare_specs(
+    products: List[Dict],
+    param_names: List[str] = None,
+) -> ComparisonResult:
+    """便捷函数：规格比对"""
+    return get_spec_comparator().compare(products, param_names)
+
+
+def format_calculation_for_chat(
+    result: CalculationResult,
+    include_reasoning: bool = True,
+) -> str:
+    """便捷函数：格式化计算结果供聊天使用"""
+    return get_calculation_engine().format_calculation_response(result, include_reasoning)
+
+
+def format_comparison_for_chat(result: ComparisonResult) -> str:
+    """便捷函数：格式化比对结果供聊天使用"""
+    return get_spec_comparator().format_comparison_response(result)
 

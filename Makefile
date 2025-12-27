@@ -217,6 +217,49 @@ print('✓ Context manager OK')"
 	@echo "  - 计算引擎（设备数量、精度校验、成本/ROI计算）"
 	@echo "  - 反馈优化器（反馈检测、统计分析、Prompt增强）"
 	@echo ""
+
+# Phase 3 升级（结构化参数）
+upgrade-phase3:
+	@echo "=== Phase 3 升级: 结构化参数 ==="
+	$(COMPOSE) run --rm api alembic upgrade head || true
+	$(COMPOSE) build --no-cache api
+	$(COMPOSE) up -d api
+	@sleep 5
+	@echo ""
+	@echo "验证新模块..."
+	$(COMPOSE) exec -T api python -c "\
+from app.services.param_extractor import extract_params; \
+params = extract_params('功率500W的AOI设备，精度0.01mm'); \
+print(f'提取参数: {len(params)}个'); \
+assert len(params) >= 2, 'Param extraction failed'; \
+print('✓ Param extractor OK')"
+	@echo ""
+	$(COMPOSE) exec -T api python -c "\
+from app.services.retrieval import smart_search; \
+result = smart_search('功率500W的设备'); \
+print(f'搜索策略: {result.get(\"strategy\")}'); \
+print('✓ Smart search OK')"
+	@echo ""
+	$(COMPOSE) exec -T api python -c "\
+from app.services.calculation_engine import compare_specs; \
+products = [{'name': 'A', 'params': [{'name': 'power', 'value': 500}]}, {'name': 'B', 'params': [{'name': 'power', 'value': 600}]}]; \
+result = compare_specs(products); \
+print(f'比对结果: {result.success}'); \
+print('✓ Spec comparator OK')"
+	@echo ""
+	@echo "=== Phase 3 升级完成 ==="
+	@echo "新增功能:"
+	@echo "  - 参数提取器（从查询提取参数需求）"
+	@echo "  - 智能搜索（根据查询类型选择策略）"
+	@echo "  - 参数化检索（参数值过滤和范围查询）"
+	@echo "  - 规格比对（多产品参数对比）"
+	@echo ""
+	@echo "调试接口:"
+	@echo "  POST /v1/debug/extract-params    - 测试参数提取"
+	@echo "  POST /v1/debug/smart-search      - 智能搜索"
+	@echo "  POST /v1/debug/search-by-params  - 参数化搜索"
+	@echo "  POST /v1/debug/compare-specs     - 规格比对"
+	@echo ""
 	@echo "调试接口:"
 	@echo "  POST /v1/debug/calculate        - 测试计算引擎"
 	@echo "  GET  /v1/debug/context/{id}     - 查看对话上下文"

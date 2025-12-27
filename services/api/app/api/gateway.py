@@ -936,3 +936,150 @@ async def debug_calculate_enhanced(body: dict):
         }
     else:
         return {"success": False, "message": "未检测到计算需求"}
+
+
+# ==================== Phase 4: 优化闭环调试接口 ====================
+
+@router.post("/debug/detect-switch")
+async def debug_detect_switch(body: dict):
+    """调试接口：场景切换检测"""
+    from ..services.scenario_switch_detector import detect_scenario_switch
+    
+    current_query = body.get("query", "")
+    previous_queries = body.get("previous_queries", [])
+    current_scenario = body.get("current_scenario")
+    
+    result = detect_scenario_switch(
+        current_query,
+        previous_queries,
+        current_scenario,
+    )
+    
+    return {
+        "switch_type": result.switch_type.value,
+        "confidence": result.confidence,
+        "previous_scenario": result.previous_scenario,
+        "new_scenario": result.new_scenario,
+        "should_clear_context": result.should_clear_context,
+        "should_summarize_previous": result.should_summarize_previous,
+        "transition_message": result.transition_message,
+        "reasoning": result.reasoning,
+    }
+
+
+@router.get("/debug/feedback-report")
+async def debug_feedback_report(days: int = 7):
+    """调试接口：反馈分析报告"""
+    from ..services.feedback_analyzer import analyze_feedback, get_feedback_analyzer
+    
+    report = analyze_feedback(days=days)
+    
+    return {
+        "period": report.period,
+        "total_feedback": report.total_feedback,
+        "positive_rate": report.positive_rate,
+        "average_rating": report.average_rating,
+        "health_score": report.health_score,
+        "by_intent": report.by_intent,
+        "by_scenario": report.by_scenario,
+        "patterns": [
+            {
+                "type": p.pattern_type,
+                "description": p.description,
+                "severity": p.severity,
+                "frequency": p.frequency,
+                "suggested_actions": p.suggested_actions,
+            }
+            for p in report.patterns
+        ],
+        "recommendations": report.recommendations,
+        "report_text": get_feedback_analyzer().generate_report_text(report),
+    }
+
+
+@router.get("/debug/feedback-trend")
+async def debug_feedback_trend(metric: str = "positive_rate", days: int = 7):
+    """调试接口：反馈趋势"""
+    from ..services.feedback_analyzer import get_feedback_trend
+    
+    trend = get_feedback_trend(metric, days)
+    
+    return {
+        "metric": metric,
+        "days": days,
+        "data": trend,
+    }
+
+
+@router.get("/debug/optimization-suggestions")
+async def debug_optimization_suggestions(
+    intent_type: str = None,
+    scenario_id: str = None,
+):
+    """调试接口：Prompt优化建议"""
+    from ..services.prompt_optimizer import get_optimization_suggestions
+    
+    suggestions = get_optimization_suggestions(intent_type, scenario_id)
+    
+    return {
+        "intent_type": intent_type,
+        "scenario_id": scenario_id,
+        "suggestions": [
+            {
+                "type": s.optimization_type.value,
+                "priority": s.priority,
+                "description": s.description,
+                "suggested_content": s.suggested_content,
+                "reasoning": s.reasoning,
+                "expected_impact": s.expected_impact,
+                "examples_count": len(s.examples),
+            }
+            for s in suggestions
+        ],
+    }
+
+
+@router.get("/debug/health")
+async def debug_health():
+    """调试接口：系统健康状态"""
+    from ..services.quality_monitor import get_health_status
+    
+    status = get_health_status()
+    
+    return {
+        "healthy": status.healthy,
+        "score": status.score,
+        "components": status.components,
+        "active_alerts": [
+            {
+                "id": a.alert_id,
+                "level": a.level.value,
+                "message": a.message,
+                "current_value": a.current_value,
+                "threshold": a.threshold,
+            }
+            for a in status.active_alerts
+        ],
+    }
+
+
+@router.get("/debug/dashboard")
+async def debug_dashboard():
+    """调试接口：监控仪表盘数据"""
+    from ..services.quality_monitor import get_dashboard_data
+    
+    return get_dashboard_data()
+
+
+@router.post("/debug/record-quality-metric")
+async def debug_record_quality_metric(body: dict):
+    """调试接口：记录质量指标"""
+    from ..services.quality_monitor import record_metric
+    
+    name = body.get("name", "")
+    value = body.get("value", 0)
+    labels = body.get("labels", {})
+    
+    record_metric(name, value, labels)
+    
+    return {"status": "recorded", "name": name, "value": value}

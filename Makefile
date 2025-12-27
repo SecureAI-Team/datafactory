@@ -260,10 +260,48 @@ print('✓ Spec comparator OK')"
 	@echo "  POST /v1/debug/search-by-params  - 参数化搜索"
 	@echo "  POST /v1/debug/compare-specs     - 规格比对"
 	@echo ""
+	@echo ""
+
+# Phase 4 升级（优化闭环）
+upgrade-phase4:
+	@echo "=== Phase 4 升级: 优化闭环 ==="
+	$(COMPOSE) build api
+	$(COMPOSE) up -d api
+	@sleep 5
+	@echo ""
+	@echo "验证新模块..."
+	$(COMPOSE) exec -T api python -c "\
+from app.services.scenario_switch_detector import detect_scenario_switch; \
+result = detect_scenario_switch('换个话题', ['之前的问题']); \
+print(f'场景切换: {result.switch_type.value}'); \
+print('✓ 场景切换检测 OK')"
+	@echo ""
+	$(COMPOSE) exec -T api python -c "\
+from app.services.feedback_analyzer import analyze_feedback; \
+report = analyze_feedback(days=1); \
+print(f'健康评分: {report.health_score:.0f}'); \
+print('✓ 反馈分析 OK')"
+	@echo ""
+	$(COMPOSE) exec -T api python -c "\
+from app.services.quality_monitor import get_health_status; \
+health = get_health_status(); \
+print(f'系统健康: {health.healthy}, 评分: {health.score:.0f}'); \
+print('✓ 质量监控 OK')"
+	@echo ""
+	@echo "=== Phase 4 升级完成 ==="
+	@echo "新增功能:"
+	@echo "  - 场景切换检测（话题转换、追问、澄清识别）"
+	@echo "  - 反馈分析报表（模式识别、改进建议）"
+	@echo "  - 自动Prompt优化（Few-shot生成）"
+	@echo "  - 质量监控仪表盘（指标跟踪、告警）"
+	@echo ""
 	@echo "调试接口:"
-	@echo "  POST /v1/debug/calculate        - 测试计算引擎"
-	@echo "  GET  /v1/debug/context/{id}     - 查看对话上下文"
-	@echo "  GET  /v1/debug/feedback-stats   - 反馈统计"
+	@echo "  POST /v1/debug/detect-switch          - 场景切换检测"
+	@echo "  GET  /v1/debug/feedback-report        - 反馈分析"
+	@echo "  GET  /v1/debug/optimization-suggestions - 优化建议"
+	@echo "  GET  /v1/debug/health                 - 健康状态"
+	@echo "  GET  /v1/debug/dashboard              - 监控仪表盘"
+	@echo ""
 
 # 验证 Phase 2 升级
 verify-phase2:

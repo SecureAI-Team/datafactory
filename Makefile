@@ -109,12 +109,11 @@ pipeline-index:
 
 # 查看 MinIO buckets 内容
 buckets:
-	@docker run --rm --network $$(docker network ls --filter name=datafactory -q | head -1) --entrypoint sh \
-		minio/mc:latest -c "mc alias set m http://minio:9000 $(MINIO_ROOT_USER) $(MINIO_ROOT_PASSWORD) && \
-		echo '=== uploads ===' && mc ls m/uploads/ && \
-		echo '=== bronze ===' && mc ls m/bronze/ && \
-		echo '=== silver ===' && mc ls m/silver/ && \
-		echo '=== gold ===' && mc ls m/gold/"
+	@$(COMPOSE) exec -T api python -c "\
+from minio import Minio; \
+import os; \
+c = Minio('minio:9000', access_key=os.getenv('MINIO_ROOT_USER'), secret_key=os.getenv('MINIO_ROOT_PASSWORD'), secure=False); \
+[print(f'=== {b} ===' + chr(10) + chr(10).join(['  ' + o.object_name for o in c.list_objects(b, recursive=True)])) for b in ['uploads', 'bronze', 'silver', 'gold']]"
 
 # 查看 OpenSearch 索引状态
 index-status:
@@ -156,6 +155,38 @@ migrate-status:
 		-e OPENSEARCH_PORT=9200 \
 		-e OPENSEARCH_INDEX=knowledge_units \
 		api python scripts/migrate_pipeline_v2.py --status
+
+# Phase 1 升级（意图识别增强 + 场景化检索路由）
+upgrade-phase1:
+	@echo "=== Phase 1 升级: 意图识别增强 + 场景化检索路由 ==="
+	$(COMPOSE) build --no-cache api
+	$(COMPOSE) up -d api
+	@sleep 5
+	@echo ""
+	@echo "验证新模块..."
+	$(COMPOSE) exec -T api python -c "\
+from app.services.intent_recognizer import recognize_intent, IntentType; \
+result = recognize_intent('AOI设备功率是多少'); \
+print(f'Intent: {result.intent_type.value}'); \
+print(f'Scenarios: {result.scenario_ids}'); \
+print(f'Entities: {result.entities}'); \
+assert result.intent_type == IntentType.PARAMETER_QUERY, 'Intent recognition failed'; \
+print('✓ Intent recognition OK')"
+	@echo ""
+	@echo "=== Phase 1 升级完成 ==="
+	@echo "新增功能:"
+	@echo "  - 增强意图识别（规则+LLM混合，新增参数查询/计算选型意图）"
+	@echo "  - 场景化检索路由（根据意图动态调整检索策略）"
+	@echo "  - 澄清问卷引擎（动态生成澄清问题）"
+	@echo ""
+	@echo "调试接口:"
+	@echo "  POST /v1/debug/recognize-intent - 测试意图识别"
+	@echo "  POST /v1/debug/search           - 测试场景化检索"
+	@echo "  GET  /v1/debug/index-stats      - 索引统计信息"
+
+# 验证 Phase 1 升级
+verify-phase1:
+	python scripts/upgrade_phase1.py --verify-only
 
 # 重新部署 Airflow DAGs（更新代码后）
 reload-dags:
@@ -209,6 +240,7 @@ help:
 	@echo "  迁移（已部署环境升级）:"
 	@echo "    make migrate-status   - 查看迁移状态"
 	@echo "    make migrate-v2       - 执行V2迁移（备份+重建+清理）"
+	@echo "    make upgrade-phase1   - 升级到Phase1（意图识别+场景路由）"
 	@echo "    make index-recreate   - 仅重建索引结构"
 	@echo "    make reload-dags      - 重新加载DAG代码"
 	@echo ""

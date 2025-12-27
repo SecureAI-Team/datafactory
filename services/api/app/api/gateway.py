@@ -1,14 +1,31 @@
-﻿import json
+﻿"""
+OpenAI 兼容的 Chat Completions Gateway
+增强版：意图识别 + 场景路由 + 澄清问卷 + RAG
+"""
+import json
 import uuid
 import logging
+import time
+from typing import Optional, Tuple, List, Dict, Any
+
 from openai import OpenAI
 from fastapi import APIRouter, Header, BackgroundTasks
 from fastapi.responses import StreamingResponse, JSONResponse
-from ..services.retrieval import search
+
+from ..services.retrieval import search, get_index_stats
 from ..services.scenarios import get_prompt
-from ..services.intent_scenario import (
-    recognize_intent, match_scenario, get_prompt_for_intent_scenario,
-    IntentType
+from ..services.intent_recognizer import (
+    recognize_intent,
+    IntentResult,
+    IntentType,
+    SceneClassification,
+    get_intent_recognizer,
+)
+from ..services.scenario_router import get_scenario_router
+from ..services.clarification import (
+    generate_clarification,
+    parse_clarification_response,
+    get_clarification_engine,
 )
 from ..services.material_manager import get_material_repository
 from ..config import settings
@@ -22,6 +39,9 @@ client = OpenAI(
     base_url=settings.upstream_llm_url.replace("/chat/completions", ""),
 )
 
+# Initialize intent recognizer with LLM client
+_intent_recognizer = get_intent_recognizer(client)
+
 # Initialize Langfuse for tracing (if configured)
 langfuse = None
 try:
@@ -32,20 +52,17 @@ try:
             secret_key=settings.langfuse_api_key,
             host=settings.langfuse_host or "http://langfuse:3000",
         )
-        logger.info(f"Langfuse initialized: host={settings.langfuse_host}, public_key={settings.langfuse_public_key[:10]}...")
-        print(f"✓ Langfuse initialized: host={settings.langfuse_host}")
+        logger.info(f"Langfuse initialized: host={settings.langfuse_host}")
     else:
-        logger.warning("Langfuse not configured: missing LANGFUSE_PUBLIC_KEY or LANGFUSE_API_KEY")
-        print(f"⚠ Langfuse not configured: PUBLIC_KEY={settings.langfuse_public_key}, API_KEY={'set' if settings.langfuse_api_key else 'not set'}")
+        logger.warning("Langfuse not configured")
 except Exception as e:
     logger.error(f"Langfuse initialization failed: {e}")
-    print(f"✗ Langfuse initialization failed: {e}")
 
-def detect_feedback_intent(query: str) -> tuple[bool, bool, str]:
-    """
-    检测用户是否在给反馈
-    返回: (is_feedback, is_positive, feedback_type)
-    """
+
+# ==================== 辅助函数 ====================
+
+def detect_feedback_intent(query: str) -> Tuple[bool, Optional[bool], Optional[str]]:
+    """检测用户是否在给反馈"""
     query_lower = query.lower()
     
     positive_keywords = ["有帮助", "很好", "不错", "满意", "谢谢", "感谢", "太棒了", "完美", "正是我需要的", "解决了"]
@@ -67,233 +84,29 @@ def detect_feedback_intent(query: str) -> tuple[bool, bool, str]:
     return False, None, None
 
 
-def check_needs_clarification(query: str, intent_type: IntentType) -> tuple[bool, str]:
-    """
-    检查是否需要澄清，返回澄清问题
-    """
-    # 复杂/模糊问题的特征
-    vague_patterns = [
-        ("怎么", "如何", "方案", "推荐"),  # 方案类问题
-        ("设计", "架构", "实现"),           # 设计类问题
-        ("对比", "区别", "选择"),           # 对比类问题
-    ]
+def is_clarification_response(query: str) -> bool:
+    """检测用户是否在回复澄清问题"""
+    import re
     
-    # 简单问题不需要澄清
-    if len(query) < 15:
-        return False, ""
+    # 数字选择
+    if re.match(r'^[\d\s,，、]+$', query.strip()):
+        return True
     
-    # 如果已经包含具体上下文，不需要澄清
-    specific_keywords = ["我们公司", "我的项目", "具体来说", "比如说", "场景是"]
-    if any(kw in query for kw in specific_keywords):
-        return False, ""
+    # 包含具体上下文的回复
+    context_keywords = ["我们", "公司", "项目", "场景", "需要", "希望", "目前", "正在", "想要"]
+    if any(kw in query for kw in context_keywords):
+        return True
     
-    # 方案推荐类需要澄清
-    if intent_type == IntentType.SOLUTION_RECOMMENDATION:
-        clarification = """🤔 为了给您更精准的推荐，请先告诉我：
-
-**请回复对应数字或直接描述：**
-
-1️⃣ **企业规模**：小型(<100人) / 中型(100-1000人) / 大型(>1000人)
-2️⃣ **预算范围**：有限 / 中等 / 充足
-3️⃣ **技术能力**：基础 / 中等 / 专业团队
-4️⃣ **核心需求**：（请描述您最关心的问题）
-
-💡 或者直接告诉我您的具体场景，例如：
-"我们是一家100人的金融公司，预算中等，主要担心数据泄露"
-"""
-        return True, clarification
+    # 较长的详细描述
+    if len(query) > 50:
+        return True
     
-    # 对比类需要澄清
-    if intent_type == IntentType.COMPARISON:
-        clarification = """🤔 为了更好地进行对比分析，请告诉我：
-
-**您最关注哪些维度？（可多选，回复数字）**
-
-1️⃣ **成本** - 采购、实施、运维成本
-2️⃣ **技术复杂度** - 学习曲线、实施难度
-3️⃣ **安全性** - 防护能力、合规性
-4️⃣ **可扩展性** - 未来扩展能力
-5️⃣ **成熟度** - 市场验证、案例数量
-
-💡 或者告诉我您的选择场景，例如：
-"我们想在零信任和SASE之间选择，主要考虑成本和易用性"
-"""
-        return True, clarification
-    
-    # 操作指南类可能需要澄清
-    if intent_type == IntentType.HOW_TO and len(query) < 30:
-        clarification = """🤔 为了给您更实用的指南，请补充：
-
-**请回复对应信息：**
-
-1️⃣ **您的环境**：云服务器 / 本地机房 / 混合云
-2️⃣ **技术栈**：使用的主要技术或产品
-3️⃣ **当前状态**：从零开始 / 已有基础 / 升级改造
-
-💡 或者直接描述您的具体情况
-"""
-        return True, clarification
-    
-    return False, ""
+    return False
 
 
-@router.post("/chat/completions")
-async def gateway(body: dict, background_tasks: BackgroundTasks, x_scenario_id: str = Header(None), authorization: str = Header(None)):
-    """
-    OpenAI-compatible chat completions endpoint with RAG.
-    增强版：意图识别 + 场景匹配 + 层级化材料 + RAG + 反馈识别
-    """
-    trace_id = str(uuid.uuid4())
-    logger.info(f"Chat request received, trace_id={trace_id}, langfuse_enabled={langfuse is not None}")
-    
-    # Get the user's query
-    query = body["messages"][-1]["content"]
-    
-    # ========== 检测是否为反馈 ==========
-    is_feedback, is_positive, feedback_type = detect_feedback_intent(query)
-    
-    if is_feedback and feedback_type in ("positive", "negative"):
-        # 记录反馈（简化版，实际应保存到数据库）
-        logger.info(f"User feedback detected: {feedback_type}")
-        
-        if is_positive:
-            feedback_response = """😊 感谢您的反馈！很高兴这个回答对您有帮助。
-
-如果您有其他问题，随时可以继续提问。我会持续优化回答质量！"""
-        else:
-            feedback_response = """🙏 感谢您的反馈！很抱歉这次回答没有完全满足您的需求。
-
-为了改进，您能告诉我：
-1. 具体哪部分不准确或不够详细？
-2. 您期望获得什么样的信息？
-
-我会尽力给出更好的回答！"""
-        
-        # 直接返回反馈响应
-        return JSONResponse(content={
-            "id": f"chatcmpl-{trace_id}",
-            "object": "chat.completion",
-            "created": int(__import__('time').time()),
-            "model": body.get("model", settings.default_model),
-            "choices": [{
-                "index": 0,
-                "message": {"role": "assistant", "content": feedback_response},
-                "finish_reason": "stop"
-            }],
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-        })
-    
-    # ========== 意图识别 ==========
-    intent = recognize_intent(query, {}, client)
-    logger.info(f"Intent: {intent.intent_type.value} (confidence: {intent.confidence:.2f})")
-    
-    # ========== 检查是否需要澄清 ==========
-    # 检查用户是否在回复澄清问题（数字选择或详细描述）
-    is_clarification_response = (
-        query.strip() in ["1", "2", "3", "4", "5", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"] or
-        len(query) > 50 or  # 详细描述
-        any(kw in query for kw in ["我们", "公司", "项目", "场景", "需要", "希望"])
-    )
-    
-    if not is_clarification_response:
-        needs_clarification, clarification_prompt = check_needs_clarification(query, intent.intent_type)
-        
-        if needs_clarification:
-            logger.info(f"Clarification needed for intent: {intent.intent_type.value}")
-            
-            return JSONResponse(content={
-                "id": f"chatcmpl-{trace_id}",
-                "object": "chat.completion",
-                "created": int(__import__('time').time()),
-                "model": body.get("model", settings.default_model),
-                "choices": [{
-                    "index": 0,
-                    "message": {"role": "assistant", "content": clarification_prompt},
-                    "finish_reason": "stop"
-                }],
-                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-            })
-    
-    # ========== 场景匹配 ==========
-    scenario_config = match_scenario(query, intent)
-    scenario_id = scenario_config.id if scenario_config else (x_scenario_id or settings.default_scenario)
-    logger.info(f"Scenario: {scenario_id}")
-    
-    # ========== 获取场景化 Prompt ==========
-    if scenario_config:
-        template = get_prompt_for_intent_scenario(intent.intent_type, scenario_id)
-        system_prompt = template.get("system_prompt", "")
-    else:
-        prompt_row = get_prompt(scenario_id)
-        system_prompt = prompt_row.template if prompt_row else "You are a helpful assistant. Cite sources when available."
-    
-    # Start Langfuse trace
-    trace = None
-    if langfuse:
-        trace = langfuse.trace(
-            id=trace_id,
-            name="chat_completion",
-            input={"query": query, "intent": intent.intent_type.value, "scenario": scenario_id},
-            metadata={"model": body.get("model", settings.default_model)},
-        )
-    
-    # ========== 层级化材料检索 ==========
-    context_parts = []
-    solutions_info = []
-    
-    # 1. 如果匹配到场景，获取场景下的方案和材料
-    if scenario_config:
-        repo = get_material_repository()
-        scenario_obj = repo.get_scenario(scenario_id)
-        
-        if scenario_obj:
-            for sol in scenario_obj.solutions[:3]:
-                solutions_info.append(f"- {sol.name}: {sol.summary}")
-                
-                for mat in sol.materials[:2]:
-                    context_parts.append(
-                        f"【{sol.name} - {mat.name}】\n"
-                        f"类型: {mat.material_type.value}\n"
-                        f"摘要: {mat.content_summary}\n"
-                        f"要点: {'; '.join(mat.key_points)}"
-                    )
-    
-    # 2. OpenSearch 检索补充
-    hits = search(query, top_k=4)
-    
-    # Log retrieval span
-    if trace:
-        trace.span(
-            name="retrieval",
-            input={"query": query, "scenario": scenario_id},
-            output={"hits": len(hits), "materials": len(context_parts)},
-        )
-    
-    for h in hits:
-        part = f"【来源: {h['source_file']}】\n标题: {h['title']}\n摘要: {h['summary']}"
-        if h.get('key_points'):
-            part += f"\n要点: {'; '.join(h['key_points'][:3])}"
-        if h.get('body'):
-            part += f"\n详情: {h['body'][:500]}..."
-        context_parts.append(part)
-    
-    # ========== 构建上下文 Prompt ==========
-    if context_parts:
-        context = "\n\n---\n\n".join(context_parts)
-        context_prompt = f"""以下是从知识库检索到的相关内容，请基于这些内容回答用户问题，并在回答末尾注明来源：
-
-{context}
-
-请在回答中引用上述来源，格式如：【来源: xxx】"""
-    else:
-        context_prompt = "知识库中未找到相关内容，请基于通用知识回答。"
-    
-    # 如果是方案推荐，添加方案列表
-    if intent.intent_type == IntentType.SOLUTION_RECOMMENDATION and solutions_info:
-        context_prompt = f"【可推荐的解决方案】\n" + "\n".join(solutions_info) + "\n\n" + context_prompt
-    
-    # ========== 构建增强的系统提示 ==========
-    intent_label = {
+def get_intent_label(intent_type: IntentType) -> str:
+    """获取意图的显示标签"""
+    labels = {
         IntentType.SOLUTION_RECOMMENDATION: "🎯 方案推荐",
         IntentType.TECHNICAL_QA: "💡 技术问答",
         IntentType.TROUBLESHOOTING: "🔧 故障诊断",
@@ -301,13 +114,150 @@ async def gateway(body: dict, background_tasks: BackgroundTasks, x_scenario_id: 
         IntentType.CONCEPT_EXPLAIN: "📖 概念解释",
         IntentType.BEST_PRACTICE: "✨ 最佳实践",
         IntentType.HOW_TO: "📋 操作指南",
+        IntentType.PARAMETER_QUERY: "📊 参数查询",
+        IntentType.CALCULATION: "🔢 计算选型",
+        IntentType.CASE_STUDY: "📁 案例参考",
         IntentType.GENERAL: "💬 通用问答",
-    }.get(intent.intent_type, "💬 通用问答")
+    }
+    return labels.get(intent_type, "💬 通用问答")
+
+
+def get_scenario_label(scenario_ids: List[str]) -> str:
+    """获取场景的显示标签"""
+    scenario_names = {
+        "aoi_inspection": "工业AOI视觉检测",
+        "network_security": "网络安全",
+        "cloud_architecture": "云架构",
+        "api_design": "API设计",
+    }
     
-    scenario_label = scenario_config.name if scenario_config else "通用"
+    if not scenario_ids:
+        return "通用"
     
-    # 在系统提示中要求添加信息卡片
-    enhanced_system_prompt = f"""{system_prompt}
+    names = [scenario_names.get(sid, sid) for sid in scenario_ids[:2]]
+    return " / ".join(names)
+
+
+def build_feedback_response(is_positive: bool) -> str:
+    """构建反馈响应"""
+    if is_positive:
+        return """😊 感谢您的反馈！很高兴这个回答对您有帮助。
+
+如果您有其他问题，随时可以继续提问。我会持续优化回答质量！"""
+    else:
+        return """🙏 感谢您的反馈！很抱歉这次回答没有完全满足您的需求。
+
+为了改进，您能告诉我：
+1. 具体哪部分不准确或不够详细？
+2. 您期望获得什么样的信息？
+
+我会尽力给出更好的回答！"""
+
+
+def build_context_prompt(
+    hits: List[Dict],
+    intent_result: IntentResult,
+    solutions_info: List[str] = None,
+) -> str:
+    """构建上下文 Prompt"""
+    context_parts = []
+    
+    # 方案信息（如果有）
+    if solutions_info:
+        context_parts.append("【可推荐的解决方案】\n" + "\n".join(solutions_info))
+    
+    # 检索结果
+    for h in hits:
+        part = f"【来源: {h['source_file']}】\n标题: {h['title']}\n摘要: {h['summary']}"
+        
+        if h.get('key_points'):
+            part += f"\n要点: {'; '.join(h['key_points'][:3])}"
+        
+        if h.get('body'):
+            body_preview = h['body'][:500]
+            part += f"\n详情: {body_preview}..."
+        
+        # 添加参数信息（如果有）
+        if h.get('params'):
+            params_str = ", ".join([
+                f"{p['name']}={p.get('value', 'N/A')}{p.get('unit', '')}"
+                for p in h['params'][:5]
+            ])
+            part += f"\n参数: {params_str}"
+        
+        context_parts.append(part)
+    
+    if context_parts:
+        context = "\n\n---\n\n".join(context_parts)
+        return f"""以下是从知识库检索到的相关内容，请基于这些内容回答用户问题：
+
+{context}
+
+请在回答中引用上述来源，格式如：【来源: xxx】"""
+    else:
+        return "知识库中未找到相关内容，请基于通用知识回答。"
+
+
+def build_system_prompt(
+    intent_result: IntentResult,
+    base_prompt: str = None,
+) -> str:
+    """构建系统 Prompt"""
+    # 获取基础 prompt
+    if not base_prompt:
+        if intent_result.scenario_ids:
+            prompt_row = get_prompt(intent_result.scenario_ids[0])
+            base_prompt = prompt_row.template if prompt_row else ""
+        
+        if not base_prompt:
+            base_prompt = "你是一个专业的知识助手，请准确、有帮助地回答用户问题。"
+    
+    # 意图特定指令
+    intent_instructions = {
+        IntentType.SOLUTION_RECOMMENDATION: """
+请按以下结构推荐解决方案：
+1. 需求分析：理解用户的具体需求
+2. 推荐方案：给出1-3个可选方案
+3. 对比分析：说明各方案的优缺点
+4. 选型建议：根据用户情况给出建议""",
+        
+        IntentType.PARAMETER_QUERY: """
+请准确回答参数相关问题：
+1. 明确给出具体数值和单位
+2. 说明参数的含义和适用范围
+3. 如有必要，给出参数间的关联关系""",
+        
+        IntentType.CALCULATION: """
+请帮助用户进行计算或选型：
+1. 明确计算所需的输入参数
+2. 说明计算公式或选型依据
+3. 给出计算结果和建议
+4. 如信息不足，说明还需要哪些信息""",
+        
+        IntentType.TROUBLESHOOTING: """
+请帮助用户诊断和解决问题：
+1. 分析可能的原因
+2. 给出排查步骤
+3. 提供解决方案
+4. 建议预防措施""",
+        
+        IntentType.COMPARISON: """
+请客观对比分析：
+1. 从多个维度进行对比
+2. 使用表格形式呈现差异
+3. 总结各选项的适用场景
+4. 根据用户情况给出建议""",
+    }
+    
+    intent_instruction = intent_instructions.get(intent_result.intent_type, "")
+    
+    # 构建完整 prompt
+    intent_label = get_intent_label(intent_result.intent_type)
+    scenario_label = get_scenario_label(intent_result.scenario_ids)
+    
+    return f"""{base_prompt}
+
+{intent_instruction}
 
 【重要】请在回答开头添加以下信息卡片（保持格式）：
 > 🤖 **{intent_label}** | 📁 场景: {scenario_label}
@@ -315,16 +265,157 @@ async def gateway(body: dict, background_tasks: BackgroundTasks, x_scenario_id: 
 【重要】请在回答结尾添加反馈引导：
 ---
 📝 **反馈**：这个回答是否有帮助？如需调整请告诉我具体需求。"""
+
+
+# ==================== API 端点 ====================
+
+@router.post("/chat/completions")
+async def gateway(
+    body: dict,
+    background_tasks: BackgroundTasks,
+    x_scenario_id: str = Header(None),
+    authorization: str = Header(None),
+):
+    """
+    OpenAI-compatible chat completions endpoint with RAG.
+    增强版：意图识别 + 场景路由 + 澄清问卷 + RAG + 反馈识别
+    """
+    trace_id = str(uuid.uuid4())
+    start_time = time.time()
     
-    # Build messages with system prompt and context
+    logger.info(f"Chat request received, trace_id={trace_id}")
+    
+    # Get the user's query
+    query = body["messages"][-1]["content"]
+    model = body.get("model", settings.default_model)
+    stream = body.get("stream", False)
+    
+    # 提取对话历史
+    history = body["messages"][:-1] if len(body["messages"]) > 1 else []
+    
+    # ========== Step 1: 检测反馈 ==========
+    is_feedback, is_positive, feedback_type = detect_feedback_intent(query)
+    
+    if is_feedback and feedback_type in ("positive", "negative"):
+        logger.info(f"User feedback detected: {feedback_type}")
+        
+        return JSONResponse(content={
+            "id": f"chatcmpl-{trace_id}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": build_feedback_response(is_positive)},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        })
+    
+    # ========== Step 2: 意图识别 ==========
+    intent_result = recognize_intent(
+        query,
+        history=history,
+        context={"scenario_hint": x_scenario_id},
+        llm_client=client,
+    )
+    
+    logger.info(
+        f"Intent: {intent_result.intent_type.value} "
+        f"(conf={intent_result.confidence:.2f}, "
+        f"scenes={intent_result.scenario_ids}, "
+        f"clarify={intent_result.needs_clarification})"
+    )
+    
+    # ========== Step 3: 澄清问卷 ==========
+    # 检查是否需要澄清，且用户不是在回复澄清
+    if intent_result.needs_clarification and not is_clarification_response(query):
+        clarification_text = generate_clarification(intent_result)
+        
+        if clarification_text:
+            logger.info(f"Generating clarification questionnaire")
+            
+            return JSONResponse(content={
+                "id": f"chatcmpl-{trace_id}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": model,
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": clarification_text},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            })
+    
+    # 如果用户在回复澄清问卷，解析回复
+    clarification_context = {}
+    if is_clarification_response(query):
+        clarification_context = parse_clarification_response(query, intent_result)
+        logger.info(f"Parsed clarification: {clarification_context}")
+    
+    # ========== Step 4: 开始 Langfuse Trace ==========
+    trace = None
+    if langfuse:
+        trace = langfuse.trace(
+            id=trace_id,
+            name="chat_completion",
+            input={
+                "query": query,
+                "intent": intent_result.intent_type.value,
+                "scenarios": intent_result.scenario_ids,
+                "confidence": intent_result.confidence,
+            },
+            metadata={"model": model},
+        )
+    
+    # ========== Step 5: 场景化检索 ==========
+    # 合并实体和澄清上下文
+    entities = {**intent_result.entities, **clarification_context}
+    
+    # 执行检索
+    hits = search(
+        query,
+        intent_result=intent_result,
+        entities=entities,
+        top_k=5,
+    )
+    
+    # 获取层级化材料（如果匹配到场景）
+    solutions_info = []
+    if intent_result.scenario_ids:
+        repo = get_material_repository()
+        for scenario_id in intent_result.scenario_ids[:1]:
+            scenario_obj = repo.get_scenario(scenario_id)
+            if scenario_obj:
+                for sol in scenario_obj.solutions[:3]:
+                    solutions_info.append(f"- {sol.name}: {sol.summary}")
+    
+    # Log retrieval span
+    if trace:
+        trace.span(
+            name="retrieval",
+            input={
+                "query": query,
+                "scenarios": intent_result.scenario_ids,
+                "entities": entities,
+            },
+            output={
+                "hits": len(hits),
+                "solutions": len(solutions_info),
+            },
+        )
+    
+    # ========== Step 6: 构建 Prompt ==========
+    context_prompt = build_context_prompt(hits, intent_result, solutions_info)
+    system_prompt = build_system_prompt(intent_result)
+    
+    # Build messages
     messages = [
-        {"role": "system", "content": enhanced_system_prompt},
+        {"role": "system", "content": system_prompt},
         {"role": "system", "content": context_prompt},
         *body["messages"],
     ]
-    
-    model = body.get("model", settings.default_model)
-    stream = body.get("stream", False)
     
     # Log generation span
     generation = None
@@ -335,6 +426,7 @@ async def gateway(body: dict, background_tasks: BackgroundTasks, x_scenario_id: 
             input=messages,
         )
     
+    # ========== Step 7: 调用 LLM ==========
     if stream:
         # Streaming response
         def generate():
@@ -352,7 +444,6 @@ async def gateway(body: dict, background_tasks: BackgroundTasks, x_scenario_id: 
                     yield f"data: {json.dumps(chunk_data)}\n\n"
                 yield "data: [DONE]\n\n"
             finally:
-                # End generation span and flush (runs after streaming completes)
                 try:
                     if generation:
                         generation.end(output=full_response)
@@ -360,9 +451,8 @@ async def gateway(body: dict, background_tasks: BackgroundTasks, x_scenario_id: 
                         trace.update(output={"response": full_response[:500]})
                     if langfuse:
                         langfuse.flush()
-                        logger.info(f"Langfuse trace flushed (stream): {trace_id}")
                 except Exception as e:
-                    logger.error(f"Langfuse flush error (stream): {e}")
+                    logger.error(f"Langfuse flush error: {e}")
         
         return StreamingResponse(generate(), media_type="text/event-stream")
     else:
@@ -388,9 +478,11 @@ async def gateway(body: dict, background_tasks: BackgroundTasks, x_scenario_id: 
                 trace.update(output={"response": response_content[:500]})
             if langfuse:
                 langfuse.flush()
-                logger.info(f"Langfuse trace flushed: {trace_id}")
         except Exception as e:
             logger.error(f"Langfuse flush error: {e}")
+        
+        elapsed = time.time() - start_time
+        logger.info(f"Chat completed in {elapsed:.2f}s, trace_id={trace_id}")
         
         return JSONResponse(content=response.model_dump())
 
@@ -416,4 +508,64 @@ async def debug_langfuse():
         "langfuse_host": settings.langfuse_host,
         "langfuse_public_key": settings.langfuse_public_key[:10] + "..." if settings.langfuse_public_key else None,
         "langfuse_api_key_set": bool(settings.langfuse_api_key),
+    }
+
+
+@router.get("/debug/index-stats")
+async def debug_index_stats():
+    """获取索引统计信息"""
+    return get_index_stats()
+
+
+@router.post("/debug/recognize-intent")
+async def debug_recognize_intent(body: dict):
+    """调试接口：测试意图识别"""
+    query = body.get("query", "")
+    history = body.get("history", [])
+    
+    result = recognize_intent(query, history=history, llm_client=client)
+    
+    return {
+        "query": query,
+        "intent_type": result.intent_type.value,
+        "confidence": result.confidence,
+        "scene_classification": result.scene_classification.value,
+        "scenario_ids": result.scenario_ids,
+        "matched_keywords": result.matched_keywords,
+        "entities": result.entities,
+        "needs_clarification": result.needs_clarification,
+        "clarification_reason": result.clarification_reason,
+    }
+
+
+@router.post("/debug/search")
+async def debug_search(body: dict):
+    """调试接口：测试场景化检索"""
+    query = body.get("query", "")
+    top_k = body.get("top_k", 5)
+    
+    # 识别意图
+    intent_result = recognize_intent(query, llm_client=client)
+    
+    # 执行检索
+    hits = search(query, intent_result=intent_result, top_k=top_k)
+    
+    return {
+        "query": query,
+        "intent": {
+            "type": intent_result.intent_type.value,
+            "scenarios": intent_result.scenario_ids,
+            "entities": intent_result.entities,
+        },
+        "hits": [
+            {
+                "id": h["id"],
+                "title": h["title"],
+                "score": h["score"],
+                "scenario_id": h.get("scenario_id"),
+                "material_type": h.get("material_type"),
+                "params": h.get("params", [])[:3],
+            }
+            for h in hits
+        ]
     }

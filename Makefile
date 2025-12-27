@@ -87,7 +87,7 @@ setup-budibase-run:
 		exit 1; \
 	fi
 	$(COMPOSE) run --rm -v $(PWD):/work -w /work \
-		-e BUDIBASE_URL=http://budibase:10000 \
+		-e BUDIBASE_URL=http://budibase:80 \
 		-e BUDIBASE_API_KEY=$(BUDIBASE_API_KEY) \
 		-e API_INTERNAL_URL=http://api:8000 \
 		api python scripts/setup_budibase_app.py

@@ -63,21 +63,69 @@ user-sim:
 setup:
 	bash scripts/setup_services.sh
 
-# 创建 Budibase 应用模板
+# ==================== Budibase 设置 ====================
+
+# 创建 Budibase 应用模板（显示说明）
 setup-budibase:
-	@echo "=== 创建 Budibase 应用模板 ==="
-	@echo "请先设置 BUDIBASE_API_KEY 环境变量"
-	@echo "1. 访问 http://localhost:10000 登录 Budibase"
-	@echo "2. 进入 Settings -> API -> 生成 API Key"
-	@echo "3. 运行: BUDIBASE_API_KEY=your_key make setup-budibase-run"
+	@echo "=== Budibase 应用自动创建 ==="
+	@echo ""
+	@echo "步骤 1: 登录 Budibase 并获取 API Key"
+	@echo "  访问: http://<ECS_IP>:10000"
+	@echo "  创建管理员账户后，进入 Settings -> API -> 生成 API Key"
+	@echo ""
+	@echo "步骤 2: 运行自动创建脚本"
+	@echo "  make setup-budibase-run BUDIBASE_API_KEY=your_api_key"
+	@echo ""
+	@echo "步骤 3: 在 Budibase UI 中设计界面并发布"
 	@echo ""
 
+# 运行 Budibase 自动创建脚本
 setup-budibase-run:
+	@if [ -z "$(BUDIBASE_API_KEY)" ]; then \
+		echo "错误: 请设置 BUDIBASE_API_KEY"; \
+		echo "用法: make setup-budibase-run BUDIBASE_API_KEY=your_key"; \
+		exit 1; \
+	fi
 	$(COMPOSE) run --rm -v $(PWD):/work -w /work \
 		-e BUDIBASE_URL=http://budibase:10000 \
 		-e BUDIBASE_API_KEY=$(BUDIBASE_API_KEY) \
 		-e API_INTERNAL_URL=http://api:8000 \
 		api python scripts/setup_budibase_app.py
+
+# ==================== n8n 设置 ====================
+
+# 创建 n8n 工作流（显示说明）
+setup-n8n:
+	@echo "=== n8n 工作流自动创建 ==="
+	@echo ""
+	@echo "方式 1: 手动导入 JSON（推荐）"
+	@echo "  1. 访问 n8n: http://<ECS_IP>:5678"
+	@echo "  2. 创建账户并登录"
+	@echo "  3. 点击 Import from File"
+	@echo "  4. 选择 infra/n8n/workflows.json"
+	@echo ""
+	@echo "方式 2: API 自动创建"
+	@echo "  1. 在 n8n 中启用 API (Settings -> API)"
+	@echo "  2. 生成 API Key"
+	@echo "  3. 运行: make setup-n8n-run N8N_API_KEY=your_key"
+	@echo ""
+
+# 运行 n8n 自动创建脚本
+setup-n8n-run:
+	@if [ -z "$(N8N_API_KEY)" ]; then \
+		echo "错误: 请设置 N8N_API_KEY"; \
+		echo "用法: make setup-n8n-run N8N_API_KEY=your_key"; \
+		exit 1; \
+	fi
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work \
+		-e N8N_URL=http://n8n:5678 \
+		-e N8N_API_KEY=$(N8N_API_KEY) \
+		-e API_INTERNAL_URL=http://api:8000 \
+		api python scripts/setup_n8n_workflows.py
+
+# 显示 n8n 工作流 JSON（用于手动导入）
+n8n-export:
+	@cat infra/n8n/workflows.json
 
 # 验证 RAG 流程
 verify:

@@ -1,0 +1,138 @@
+[
+  {
+    "name": "文档处理完成通知",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "document-processed",
+          "responseMode": "lastNode"
+        },
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "position": [250, 300]
+      },
+      {
+        "parameters": {
+          "url": "http://api:8000/v1/kg/import",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {"name": "text", "value": "={{ $json.title }} {{ $json.summary }}"},
+              {"name": "extract_relations", "value": "true"}
+            ]
+          }
+        },
+        "name": "导入知识图谱",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [450, 300]
+      }
+    ],
+    "connections": {
+      "Webhook": {"main": [[{"node": "导入知识图谱", "type": "main", "index": 0}]]}
+    }
+  },
+  {
+    "name": "每日反馈分析报告",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {"interval": [{"field": "hours", "hoursInterval": 24}]}
+        },
+        "name": "每日触发",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "position": [250, 300]
+      },
+      {
+        "parameters": {
+          "url": "http://api:8000/v1/debug/feedback-report"
+        },
+        "name": "获取反馈报告",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [450, 300]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "number": [{"value1": "={{ $json.health_score }}", "operation": "smaller", "value2": 70}]
+          }
+        },
+        "name": "健康评分检查",
+        "type": "n8n-nodes-base.if",
+        "position": [650, 300]
+      }
+    ],
+    "connections": {
+      "每日触发": {"main": [[{"node": "获取反馈报告", "type": "main", "index": 0}]]},
+      "获取反馈报告": {"main": [[{"node": "健康评分检查", "type": "main", "index": 0}]]}
+    }
+  },
+  {
+    "name": "知识图谱定期同步",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {"interval": [{"field": "hours", "hoursInterval": 6}]}
+        },
+        "name": "每6小时触发",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "position": [250, 300]
+      },
+      {
+        "parameters": {
+          "url": "http://api:8000/v1/kg/stats"
+        },
+        "name": "获取图谱统计",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [450, 300]
+      }
+    ],
+    "connections": {
+      "每6小时触发": {"main": [[{"node": "获取图谱统计", "type": "main", "index": 0}]]}
+    }
+  },
+  {
+    "name": "用户查询后推荐",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "user-query",
+          "responseMode": "lastNode"
+        },
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "position": [250, 300]
+      },
+      {
+        "parameters": {
+          "url": "http://api:8000/v1/recommend/track",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {"name": "user_id", "value": "={{ $json.user_id }}"},
+              {"name": "behavior_type", "value": "query"},
+              {"name": "query", "value": "={{ $json.query }}"}
+            ]
+          }
+        },
+        "name": "记录查询行为",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [450, 300]
+      },
+      {
+        "parameters": {
+          "url": "http://api:8000/v1/recommend?user_id={{ $json.user_id }}&limit=5"
+        },
+        "name": "获取推荐",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [650, 300]
+      }
+    ],
+    "connections": {
+      "Webhook": {"main": [[{"node": "记录查询行为", "type": "main", "index": 0}]]},
+      "记录查询行为": {"main": [[{"node": "获取推荐", "type": "main", "index": 0}]]}
+    }
+  }
+]
+

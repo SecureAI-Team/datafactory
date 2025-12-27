@@ -734,3 +734,236 @@ def smart_search(
         },
         "extracted_params": [p.to_dict() for p in extracted_params],
     }
+
+
+# ==================== 图谱增强检索 ====================
+
+def search_with_knowledge_graph(
+    query: str,
+    intent_result: Optional[IntentResult] = None,
+    entities: Optional[Dict[str, Any]] = None,
+    top_k: int = 5,
+    expand_depth: int = 1,
+) -> Dict:
+    """
+    结合知识图谱的增强检索
+    
+    流程：
+    1. 从查询中抽取实体
+    2. 在知识图谱中查找相关实体和关系
+    3. 使用图谱结果扩展检索
+    4. 合并 OpenSearch 检索结果
+    
+    Args:
+        query: 用户查询
+        intent_result: 意图识别结果
+        entities: 已抽取的实体
+        top_k: 返回数量
+        expand_depth: 图谱遍历深度
+    
+    Returns:
+        检索结果，包含图谱增强信息
+    """
+    from .entity_extractor import extract_entities, EntityType
+    from .knowledge_graph import get_knowledge_graph, GraphQueryResult
+    
+    result = {
+        "hits": [],
+        "graph_entities": [],
+        "graph_relations": [],
+        "strategy": "kg_enhanced",
+    }
+    
+    try:
+        kg = get_knowledge_graph()
+        
+        # Step 1: 抽取查询中的实体
+        entity_result = extract_entities(query)
+        extracted_entities = entity_result.entities
+        
+        result["extracted_entities"] = [e.to_dict() for e in extracted_entities]
+        
+        # Step 2: 在知识图谱中查找相关节点
+        related_terms = []
+        
+        for entity in extracted_entities:
+            # 映射实体类型到图谱标签
+            label_map = {
+                EntityType.PRODUCT: "Product",
+                EntityType.PARAMETER: "Parameter",
+                EntityType.SCENARIO: "Scenario",
+                EntityType.COMPANY: "Company",
+            }
+            
+            label = label_map.get(entity.entity_type)
+            if not label:
+                continue
+            
+            # 查询图谱中的相关节点
+            graph_result = kg.query_neighbors(
+                label=label,
+                name=entity.normalized or entity.text,
+                depth=expand_depth,
+            )
+            
+            # 收集相关节点的名称
+            for node in graph_result.nodes:
+                name = node.properties.get("name", "")
+                if name and name not in related_terms:
+                    related_terms.append(name)
+                    result["graph_entities"].append({
+                        "name": name,
+                        "label": node.label,
+                    })
+            
+            # 收集关系
+            for edge in graph_result.edges:
+                result["graph_relations"].append({
+                    "type": edge.relation_type,
+                    "source": edge.source_id,
+                    "target": edge.target_id,
+                })
+        
+        # Step 3: 构建扩展查询
+        expanded_query = query
+        if related_terms:
+            # 将图谱中发现的相关术语添加到查询中
+            expansion_terms = " ".join(related_terms[:5])
+            expanded_query = f"{query} {expansion_terms}"
+            result["expanded_query"] = expanded_query
+        
+        # Step 4: 执行检索
+        if intent_result:
+            hits = search(
+                expanded_query,
+                top_k=top_k,
+                intent_result=intent_result,
+                entities=entities,
+            )
+        else:
+            hits = search(expanded_query, top_k=top_k)
+        
+        result["hits"] = hits
+        result["total"] = len(hits)
+        
+        # Step 5: 增强结果（添加图谱上下文）
+        _enrich_hits_with_graph_context(result["hits"], kg, extracted_entities)
+        
+    except Exception as e:
+        logger.warning(f"Knowledge graph enhanced search failed: {e}, falling back to normal search")
+        # 降级到普通搜索
+        hits = search(query, top_k=top_k, intent_result=intent_result, entities=entities)
+        result["hits"] = hits
+        result["total"] = len(hits)
+        result["strategy"] = "fallback_to_normal"
+        result["kg_error"] = str(e)
+    
+    return result
+
+
+def _enrich_hits_with_graph_context(
+    hits: List[Dict],
+    kg,
+    query_entities: List,
+) -> None:
+    """
+    用图谱上下文增强检索结果
+    
+    为每个检索结果添加相关的图谱信息
+    """
+    from .entity_extractor import extract_entities, EntityType
+    
+    for hit in hits:
+        # 从 hit 中提取实体
+        title = hit.get("title", "")
+        summary = hit.get("summary", "")
+        text = f"{title} {summary}"
+        
+        # 抽取实体
+        entity_result = extract_entities(text)
+        
+        # 查找与查询实体的关联
+        graph_context = []
+        for query_entity in query_entities:
+            for hit_entity in entity_result.entities:
+                # 检查是否有直接关联
+                if query_entity.text.lower() == hit_entity.text.lower():
+                    continue
+                
+                # 尝试查找路径（简化版，只检查直接关联）
+                try:
+                    label_map = {
+                        EntityType.PRODUCT: "Product",
+                        EntityType.PARAMETER: "Parameter",
+                        EntityType.SCENARIO: "Scenario",
+                    }
+                    
+                    q_label = label_map.get(query_entity.entity_type, "Entity")
+                    h_label = label_map.get(hit_entity.entity_type, "Entity")
+                    
+                    neighbors = kg.query_neighbors(
+                        label=q_label,
+                        name=query_entity.normalized or query_entity.text,
+                        depth=1,
+                    )
+                    
+                    # 检查 hit_entity 是否在邻居中
+                    for node in neighbors.nodes:
+                        if node.properties.get("name", "").lower() == hit_entity.text.lower():
+                            graph_context.append({
+                                "from": query_entity.text,
+                                "to": hit_entity.text,
+                                "relation": "related",
+                            })
+                            break
+                            
+                except Exception:
+                    pass
+        
+        if graph_context:
+            hit["_graph_context"] = graph_context
+
+
+def get_entity_knowledge(
+    entity_name: str,
+    entity_type: str = "Product",
+    depth: int = 2,
+) -> Dict:
+    """
+    获取实体的知识图谱信息
+    
+    Args:
+        entity_name: 实体名称
+        entity_type: 实体类型
+        depth: 遍历深度
+    
+    Returns:
+        实体的图谱信息
+    """
+    from .knowledge_graph import get_knowledge_graph
+    
+    try:
+        kg = get_knowledge_graph()
+        
+        # 获取节点
+        node = kg.get_node(entity_type, entity_name)
+        if not node:
+            return {"found": False}
+        
+        # 获取邻居
+        neighbors = kg.query_neighbors(
+            label=entity_type,
+            name=entity_name,
+            depth=depth,
+        )
+        
+        return {
+            "found": True,
+            "node": node.to_dict(),
+            "neighbors": [n.to_dict() for n in neighbors.nodes],
+            "relations": [e.to_dict() for e in neighbors.edges],
+        }
+        
+    except Exception as e:
+        logger.error(f"Get entity knowledge failed: {e}")
+        return {"found": False, "error": str(e)}

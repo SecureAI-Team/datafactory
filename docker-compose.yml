@@ -27,6 +27,20 @@ services:
     ulimits: { memlock: -1, nofile: 65536 }
     ports: ["9200:9200"]
 
+  neo4j:
+    image: neo4j:5.15-community
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-neo4jpass}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    ports:
+      - "7474:7474"   # HTTP
+      - "7687:7687"   # Bolt
+
   tika:
     image: apache/tika:2.9.0.0
     ports: ["9998:9998"]
@@ -208,4 +222,6 @@ volumes:
   pgdata:
   minio:
   airflow_logs:
+  neo4j_data:
+  neo4j_logs:
 

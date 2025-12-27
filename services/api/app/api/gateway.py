@@ -78,6 +78,100 @@ except Exception as e:
 
 # ==================== 辅助函数 ====================
 
+def extract_image_from_message(content) -> Tuple[Optional[str], str]:
+    """
+    从消息内容中提取图片URL和文本
+    
+    OpenAI 格式支持:
+    - 纯文本: "Hello"
+    - 多模态: [{"type": "text", "text": "..."}, {"type": "image_url", "image_url": {"url": "..."}}]
+    
+    Returns:
+        (image_url, text_content)
+    """
+    if isinstance(content, str):
+        return None, content
+    
+    if isinstance(content, list):
+        image_url = None
+        text_parts = []
+        
+        for item in content:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    text_parts.append(item.get("text", ""))
+                elif item.get("type") == "image_url":
+                    image_url_obj = item.get("image_url", {})
+                    if isinstance(image_url_obj, dict):
+                        image_url = image_url_obj.get("url")
+                    elif isinstance(image_url_obj, str):
+                        image_url = image_url_obj
+        
+        return image_url, " ".join(text_parts)
+    
+    return None, str(content) if content else ""
+
+
+async def process_image_message(image_url: str, question: str) -> str:
+    """
+    处理包含图片的消息
+    
+    Args:
+        image_url: 图片URL（可以是普通URL或base64 data URI）
+        question: 用户问题
+    
+    Returns:
+        图片分析结果文本
+    """
+    from ..services.vision_service import get_vision_service, VisionTaskType
+    
+    vision_service = get_vision_service()
+    
+    # 检测任务类型
+    task_type = VisionTaskType.GENERAL_QA
+    
+    question_lower = question.lower() if question else ""
+    if "表格" in question_lower or "数据" in question_lower:
+        task_type = VisionTaskType.TABLE_EXTRACT
+    elif "图表" in question_lower or "趋势" in question_lower:
+        task_type = VisionTaskType.CHART_ANALYZE
+    elif "文字" in question_lower or "识别" in question_lower:
+        task_type = VisionTaskType.OCR
+    
+    # 分析图片
+    result = vision_service.analyze_image(image_url, question, task_type)
+    
+    if result.success:
+        response_parts = []
+        
+        if result.text_content:
+            response_parts.append(result.text_content)
+        
+        if result.tables:
+            response_parts.append("\n**提取的表格：**")
+            for i, table in enumerate(result.tables, 1):
+                if table.get("title"):
+                    response_parts.append(f"\n表格 {i}: {table['title']}")
+                if table.get("headers"):
+                    response_parts.append("| " + " | ".join(table["headers"]) + " |")
+                    response_parts.append("| " + " | ".join(["---"] * len(table["headers"])) + " |")
+                for row in table.get("rows", []):
+                    response_parts.append("| " + " | ".join(str(c) for c in row) + " |")
+        
+        if result.charts:
+            response_parts.append("\n**图表分析：**")
+            for chart in result.charts:
+                response_parts.append(f"- 类型: {chart.get('type', '未知')}")
+                if chart.get("title"):
+                    response_parts.append(f"- 标题: {chart['title']}")
+                if chart.get("data"):
+                    response_parts.append(f"- 数据点: {len(chart['data'])} 个")
+        
+        return "\n".join(response_parts)
+    else:
+        return f"图片分析失败: {result.error}"
+
+
 def detect_feedback_intent(query: str) -> Tuple[bool, Optional[bool], Optional[str]]:
     """检测用户是否在给反馈"""
     query_lower = query.lower()
@@ -306,10 +400,29 @@ async def gateway(
     
     logger.info(f"Chat request received, trace_id={trace_id}, conv_id={conversation_id}")
     
-    # Get the user's query
-    query = body["messages"][-1]["content"]
+    # Get the user's query - 支持多模态消息
+    last_message = body["messages"][-1]
+    raw_content = last_message.get("content", "")
+    
+    # 检查是否包含图片
+    image_url, text_query = extract_image_from_message(raw_content)
+    query = text_query
+    
     model = body.get("model", settings.default_model)
     stream = body.get("stream", False)
+    
+    # ========== 图片消息处理 ==========
+    image_analysis = None
+    if image_url:
+        logger.info(f"Image detected in message, analyzing...")
+        try:
+            import asyncio
+            # 异步处理图片
+            image_analysis = await process_image_message(image_url, query)
+            logger.info(f"Image analysis completed, length={len(image_analysis)}")
+        except Exception as e:
+            logger.error(f"Image analysis failed: {e}")
+            image_analysis = f"[图片分析失败: {str(e)}]"
     
     # 提取对话历史
     history = body["messages"][:-1] if len(body["messages"]) > 1 else []
@@ -489,6 +602,10 @@ async def gateway(
     conv_context_prompt = context.build_context_prompt()
     if conv_context_prompt:
         context_prompt = f"{conv_context_prompt}\n\n{context_prompt}"
+    
+    # 添加图片分析结果
+    if image_analysis:
+        context_prompt = f"【图片分析结果】\n{image_analysis}\n\n{context_prompt}"
     
     # 使用反馈优化器增强 Prompt
     optimizer = get_feedback_optimizer()

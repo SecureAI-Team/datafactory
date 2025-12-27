@@ -303,6 +303,46 @@ print('✓ 质量监控 OK')"
 	@echo "  GET  /v1/debug/dashboard              - 监控仪表盘"
 	@echo ""
 
+# Phase 5 升级 - 智能能力扩展
+upgrade-phase5:
+	@echo "=== Phase 5 升级: 智能能力扩展 ==="
+	$(COMPOSE) run --rm api alembic upgrade head || true
+	$(COMPOSE) up -d neo4j || true
+	$(COMPOSE) build api
+	$(COMPOSE) up -d api
+	@sleep 5
+	@echo ""
+	@echo "验证新模块..."
+	$(COMPOSE) exec -T api python -c "\
+from app.services.vision_service import get_vision_service; \
+print('✓ VisionService OK')"
+	$(COMPOSE) exec -T api python -c "\
+from app.services.knowledge_graph import get_knowledge_graph; \
+print('✓ KnowledgeGraph OK')"
+	$(COMPOSE) exec -T api python -c "\
+from app.services.recommendation_engine import get_recommendation_engine; \
+print('✓ RecommendationEngine OK')"
+	$(COMPOSE) exec -T api python -c "\
+from app.services.summary_service import get_summary_service; \
+print('✓ SummaryService OK')"
+	@echo ""
+	@echo "=== Phase 5 升级完成 ==="
+	@echo "新增功能:"
+	@echo "  - 多模态理解（图片问答、表格提取、OCR）"
+	@echo "  - 知识图谱（实体/关系抽取、图谱查询）"
+	@echo "  - 智能推荐（热门、协同过滤、个性化）"
+	@echo "  - 对话摘要（自动摘要、历史压缩）"
+	@echo ""
+	@echo "新增 API:"
+	@echo "  POST /v1/vision/analyze         - 图片分析"
+	@echo "  GET  /v1/kg/query              - 知识图谱查询"
+	@echo "  GET  /v1/recommend             - 获取推荐"
+	@echo "  POST /v1/summary/generate      - 生成摘要"
+	@echo ""
+	@echo "服务端口:"
+	@echo "  Neo4j Browser: http://localhost:7474"
+	@echo ""
+
 # 验证 Phase 2 升级
 verify-phase2:
 	python scripts/upgrade_phase2.py --verify-only
@@ -360,6 +400,10 @@ help:
 	@echo "    make migrate-status   - 查看迁移状态"
 	@echo "    make migrate-v2       - 执行V2迁移（备份+重建+清理）"
 	@echo "    make upgrade-phase1   - 升级到Phase1（意图识别+场景路由）"
+	@echo "    make upgrade-phase2   - 升级到Phase2（上下文+计算+反馈）"
+	@echo "    make upgrade-phase3   - 升级到Phase3（结构化参数）"
+	@echo "    make upgrade-phase4   - 升级到Phase4（优化闭环）"
+	@echo "    make upgrade-phase5   - 升级到Phase5（智能能力扩展）"
 	@echo "    make index-recreate   - 仅重建索引结构"
 	@echo "    make reload-dags      - 重新加载DAG代码"
 	@echo ""

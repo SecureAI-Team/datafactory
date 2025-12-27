@@ -18,7 +18,9 @@ dependencies = [
   "python-jose==3.3.0",
   "passlib[bcrypt]==1.7.4",
   "pytest==8.2.0",
-  "ruff==0.4.9"
+  "ruff==0.4.9",
+  "neo4j>=5.0.0",
+  "redis>=5.0.0"
 ]
 
 [build-system]

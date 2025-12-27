@@ -79,6 +79,10 @@ class ConversationContext:
     # 澄清状态
     pending_clarification: Optional[Dict] = None
     
+    # 历史摘要
+    history_summary: Optional[str] = None
+    last_summary_turn: int = 0
+    
     # 时间戳
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -226,6 +230,10 @@ class ConversationContext:
         # 当前场景
         if self.current_scenario:
             parts.append(f"【当前场景】\n{self.current_scenario}")
+        
+        # 历史摘要（如果有）
+        if hasattr(self, 'history_summary') and self.history_summary:
+            parts.append(f"【历史摘要】\n{self.history_summary}")
         
         if not parts:
             return ""
@@ -541,4 +549,136 @@ def get_context_summary(conversation_id: str) -> str:
     """便捷函数：获取上下文摘要"""
     context = get_or_create_context(conversation_id)
     return context.build_context_prompt()
+
+
+def auto_summarize_if_needed(
+    conversation_id: str,
+    max_turns: int = 10,
+) -> bool:
+    """
+    便捷函数：如果需要则自动生成摘要
+    
+    Args:
+        conversation_id: 对话ID
+        max_turns: 触发摘要的最大轮次
+    
+    Returns:
+        是否生成了摘要
+    """
+    from .summary_service import (
+        get_summary_service,
+        SummaryType,
+        ConversationTurn as SummaryTurn,
+    )
+    
+    manager = get_context_manager()
+    context = manager.get_or_create(conversation_id)
+    
+    # 检查是否需要摘要
+    turns_since_summary = len(context.turns) - context.last_summary_turn
+    
+    if turns_since_summary < max_turns:
+        return False
+    
+    # 获取需要摘要的轮次
+    turns_to_summarize = context.turns[context.last_summary_turn:]
+    
+    if not turns_to_summarize:
+        return False
+    
+    # 转换轮次格式
+    summary_turns = [
+        SummaryTurn(
+            role=t.role,
+            content=t.content,
+            timestamp=t.timestamp,
+            intent_type=t.intent_type or "",
+        )
+        for t in turns_to_summarize
+    ]
+    
+    # 生成摘要
+    service = get_summary_service()
+    summary = service.generate_summary(
+        turns=summary_turns,
+        summary_type=SummaryType.INSTANT,
+        conversation_id=conversation_id,
+    )
+    
+    if summary.text:
+        # 更新上下文
+        context.history_summary = summary.text
+        context.last_summary_turn = len(context.turns)
+        manager.save(context)
+        
+        logger.info(f"Auto-generated summary for conversation {conversation_id}")
+        return True
+    
+    return False
+
+
+def compress_context_history(
+    conversation_id: str,
+    keep_recent: int = 5,
+) -> ConversationContext:
+    """
+    便捷函数：压缩对话历史
+    
+    保留最近的轮次，将之前的轮次生成摘要
+    
+    Args:
+        conversation_id: 对话ID
+        keep_recent: 保留的最近轮次数
+    
+    Returns:
+        更新后的上下文
+    """
+    from .summary_service import (
+        get_summary_service,
+        SummaryType,
+        ConversationTurn as SummaryTurn,
+    )
+    
+    manager = get_context_manager()
+    context = manager.get_or_create(conversation_id)
+    
+    if len(context.turns) <= keep_recent:
+        return context
+    
+    # 分割轮次
+    to_summarize = context.turns[:-keep_recent]
+    to_keep = context.turns[-keep_recent:]
+    
+    # 生成摘要
+    summary_turns = [
+        SummaryTurn(
+            role=t.role,
+            content=t.content,
+            timestamp=t.timestamp,
+            intent_type=t.intent_type or "",
+        )
+        for t in to_summarize
+    ]
+    
+    service = get_summary_service()
+    summary = service.generate_summary(
+        turns=summary_turns,
+        summary_type=SummaryType.INSTANT,
+        conversation_id=conversation_id,
+    )
+    
+    # 更新上下文
+    if context.history_summary:
+        context.history_summary = f"{context.history_summary}\n\n{summary.text}"
+    else:
+        context.history_summary = summary.text
+    
+    context.turns = to_keep
+    context.last_summary_turn = 0
+    
+    manager.save(context)
+    
+    logger.info(f"Compressed history for conversation {conversation_id}: {len(to_summarize)} turns -> summary")
+    
+    return context
 

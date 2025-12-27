@@ -411,16 +411,16 @@ class KnowledgeGraphService:
                 # 直接搜索所有节点，不按标签分
                 cypher = """
                 MATCH (n)
-                WHERE toLower(n.name) CONTAINS toLower($query)
-                   OR toLower(coalesce(n.text, '')) CONTAINS toLower($query)
+                WHERE toLower(n.name) CONTAINS toLower($search_term)
+                   OR toLower(coalesce(n.text, '')) CONTAINS toLower($search_term)
                 RETURN n, elementId(n) as id, labels(n) as node_labels
-                LIMIT $limit
+                LIMIT $max_results
                 """
                 
                 records = session.run(
                     cypher,
-                    query=query_text,
-                    limit=limit,
+                    search_term=query_text,
+                    max_results=limit,
                 )
                 
                 for record in records:

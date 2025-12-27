@@ -443,12 +443,12 @@ async def debug_search(q: str = Query(..., description="搜索词")):
         with kg.session() as session:
             cypher = """
             MATCH (n)
-            WHERE toLower(n.name) CONTAINS toLower($query)
-               OR toLower(coalesce(n.text, '')) CONTAINS toLower($query)
+            WHERE toLower(n.name) CONTAINS toLower($search_term)
+               OR toLower(coalesce(n.text, '')) CONTAINS toLower($search_term)
             RETURN n, elementId(n) as id, labels(n) as node_labels
             LIMIT 10
             """
-            records = session.run(cypher, query=q)
+            records = session.run(cypher, search_term=q)
             for record in records:
                 direct_results.append({
                     "id": record["id"],

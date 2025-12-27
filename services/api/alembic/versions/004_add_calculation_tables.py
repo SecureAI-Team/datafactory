@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 # revision identifiers
 revision = '004'
-down_revision = '0001'
+down_revision = '003'
 branch_labels = None
 depends_on = None
 

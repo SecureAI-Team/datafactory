@@ -139,6 +139,38 @@ setup-openmetadata:
 
 setup-minio-events:
 	@echo "=== MinIO 事件通知配置 ==="
+	@echo ""
+	@echo "步骤 1: 配置 webhook 目标..."
+	-$(COMPOSE) exec -T minio mc alias set adf http://localhost:9000 $(MINIO_ROOT_USER) $(MINIO_ROOT_PASSWORD) 2>/dev/null || true
+	@echo ""
+	@echo "步骤 2: 添加 n8n webhook 配置..."
+	-$(COMPOSE) exec -T minio mc admin config set adf notify_webhook:n8n endpoint="http://n8n:5678/webhook/file-uploaded" queue_limit="10000" 2>/dev/null || echo "  (需要重启生效)"
+	@echo ""
+	@echo "步骤 3: 重启 MinIO 服务..."
+	$(COMPOSE) restart minio
+	@echo "  等待 MinIO 启动..."
+	@sleep 5
+	@echo ""
+	@echo "步骤 4: 重新配置 alias..."
+	-$(COMPOSE) exec -T minio mc alias set adf http://localhost:9000 $(MINIO_ROOT_USER) $(MINIO_ROOT_PASSWORD)
+	@echo ""
+	@echo "步骤 5: 为 uploads bucket 添加事件通知..."
+	-$(COMPOSE) exec -T minio mc event add adf/uploads arn:minio:sqs::n8n:webhook --event put --suffix ".pdf,.docx,.doc,.txt,.md,.pptx,.xlsx" 2>/dev/null || echo "  事件可能已存在"
+	@echo ""
+	@echo "步骤 6: 验证配置..."
+	$(COMPOSE) exec -T minio mc event list adf/uploads
+	@echo ""
+	@echo "============================================================"
+	@echo "✓ MinIO 事件通知配置完成!"
+	@echo ""
+	@echo "测试方法:"
+	@echo "  1. 上传文件到 MinIO uploads bucket"
+	@echo "  2. 检查 n8n 是否收到 webhook"
+	@echo "  3. 检查 Airflow DAG 是否被触发"
+	@echo "============================================================"
+
+setup-minio-events-guide:
+	@echo "=== MinIO 事件通知配置指南 ==="
 	$(COMPOSE) run --rm -v $(PWD):/work -w /work \
 		-e MINIO_URL=http://minio:9000 \
 		-e MINIO_ROOT_USER=$(MINIO_ROOT_USER) \

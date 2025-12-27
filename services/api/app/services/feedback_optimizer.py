@@ -434,14 +434,55 @@ def get_feedback_optimizer() -> FeedbackOptimizer:
 
 def record_feedback(
     conversation_id: str,
-    feedback_type: FeedbackType,
-    query: str,
-    response: str,
+    feedback_type: Any = None,  # 支持 FeedbackType 或字符串
+    query: str = None,
+    response: str = None,
+    # 兼容 conversation.py 的参数名
+    message_id: str = None,
+    user_query: str = None,
+    assistant_response: str = None,
+    feedback_value: Any = None,
+    correction_text: str = None,
+    retrieved_sources: List = None,
     **kwargs,
 ) -> FeedbackRecord:
-    """便捷函数：记录反馈"""
+    """便捷函数：记录反馈（兼容多种调用方式）"""
+    # 参数兼容处理
+    actual_query = query or user_query or ""
+    actual_response = response or assistant_response or ""
+    
+    # feedback_type 处理
+    if isinstance(feedback_type, str):
+        # 从字符串转换
+        type_mapping = {
+            "thumbs_up": FeedbackType.EXPLICIT_POSITIVE,
+            "thumbs_down": FeedbackType.EXPLICIT_NEGATIVE,
+            "rating": FeedbackType.EXPLICIT_POSITIVE if feedback_value and feedback_value >= 4 else FeedbackType.EXPLICIT_NEGATIVE,
+            "correction": FeedbackType.EXPLICIT_NEGATIVE,
+            "positive": FeedbackType.EXPLICIT_POSITIVE,
+            "negative": FeedbackType.EXPLICIT_NEGATIVE,
+        }
+        actual_feedback_type = type_mapping.get(feedback_type, FeedbackType.EXPLICIT_POSITIVE)
+    else:
+        actual_feedback_type = feedback_type or FeedbackType.EXPLICIT_POSITIVE
+    
+    # 计算 rating
+    rating = kwargs.get("rating")
+    if rating is None and feedback_value is not None:
+        if isinstance(feedback_value, bool):
+            rating = 5 if feedback_value else 1
+        elif isinstance(feedback_value, (int, float)):
+            rating = int(feedback_value)
+    
     return get_feedback_optimizer().record_feedback(
-        conversation_id, feedback_type, query, response, **kwargs
+        conversation_id=conversation_id,
+        feedback_type=actual_feedback_type,
+        query=actual_query,
+        response=actual_response,
+        message_id=message_id,
+        rating=rating,
+        text=correction_text,
+        **kwargs,
     )
 
 
@@ -471,3 +512,23 @@ def detect_and_record_natural_feedback(
             )
     
     return None
+
+
+# ==================== 兼容性别名 ====================
+
+# 为 conversation.py 提供的别名
+get_optimizer = get_feedback_optimizer
+
+
+def get_feedback_stats(days: int = 7) -> Dict:
+    """获取反馈统计（兼容接口）"""
+    stats = get_feedback_optimizer().get_stats(days=days)
+    return {
+        "total_count": stats.total_count,
+        "positive_count": stats.positive_count,
+        "negative_count": stats.negative_count,
+        "avg_rating": stats.average_rating,
+        "by_intent": stats.by_intent,
+        "by_scenario": stats.by_scenario,
+        "common_issues": stats.common_issues,
+    }

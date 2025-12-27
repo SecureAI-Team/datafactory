@@ -500,3 +500,45 @@ def save_context(context: ConversationContext):
     """便捷函数：保存上下文"""
     get_context_manager().save(context)
 
+
+def update_context(
+    conversation_id: str,
+    query: str,
+    response: str,
+    metadata: Dict = None,
+) -> ConversationContext:
+    """便捷函数：更新上下文（添加一轮对话）"""
+    manager = get_context_manager()
+    context = manager.get_or_create(conversation_id)
+    
+    # 提取实体
+    entities = manager.extract_entities_from_text(query, len(context.turns))
+    
+    # 添加用户轮次
+    context.add_turn(
+        role="user",
+        content=query,
+        intent_type=metadata.get("intent") if metadata else None,
+        entities=[
+            {
+                "name": e.name,
+                "value": e.value,
+                "entity_type": e.entity_type,
+                "source_turn": e.source_turn,
+            }
+            for e in entities
+        ],
+    )
+    
+    # 添加助手轮次
+    context.add_turn(role="assistant", content=response)
+    
+    manager.save(context)
+    return context
+
+
+def get_context_summary(conversation_id: str) -> str:
+    """便捷函数：获取上下文摘要"""
+    context = get_or_create_context(conversation_id)
+    return context.build_context_prompt()
+

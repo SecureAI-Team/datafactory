@@ -123,6 +123,59 @@ setup-n8n-run:
 		-e API_INTERNAL_URL=http://api:8000 \
 		api python scripts/setup_n8n_workflows.py
 
+# ==================== Langfuse 设置 ====================
+
+setup-langfuse:
+	@echo "=== Langfuse 配置指南 ==="
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work api python scripts/setup_langfuse.py
+
+# ==================== OpenMetadata 设置 ====================
+
+setup-openmetadata:
+	@echo "=== OpenMetadata 配置指南 ==="
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work api python scripts/setup_openmetadata.py
+
+# ==================== MinIO 事件通知设置 ====================
+
+setup-minio-events:
+	@echo "=== MinIO 事件通知配置 ==="
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work \
+		-e MINIO_URL=http://minio:9000 \
+		-e MINIO_ROOT_USER=$(MINIO_ROOT_USER) \
+		-e MINIO_ROOT_PASSWORD=$(MINIO_ROOT_PASSWORD) \
+		-e N8N_WEBHOOK_URL=http://n8n:5678/webhook/file-uploaded \
+		api python scripts/setup_minio_events.py
+
+# ==================== 全部服务配置向导 ====================
+
+setup-all:
+	@echo "============================================================"
+	@echo "AI Data Factory 服务配置向导"
+	@echo "============================================================"
+	@echo ""
+	@echo "各服务配置状态:"
+	@echo ""
+	@echo "  ✓ 自动配置完成:"
+	@echo "    - PostgreSQL, MinIO, OpenSearch, Neo4j"
+	@echo "    - API, Airflow, Open WebUI"
+	@echo ""
+	@echo "  ⚠ 需要手动配置:"
+	@echo "    1. n8n 工作流:        make setup-n8n"
+	@echo "    2. Budibase 应用:     make setup-budibase"
+	@echo "    3. Langfuse 追踪:     make setup-langfuse"
+	@echo "    4. OpenMetadata:      make setup-openmetadata"
+	@echo "    5. MinIO 事件通知:    make setup-minio-events"
+	@echo ""
+	@echo "  访问地址:"
+	@echo "    - Open WebUI:    http://<IP>:3001"
+	@echo "    - Airflow:       http://<IP>:8080"
+	@echo "    - n8n:           http://<IP>:5678"
+	@echo "    - Budibase:      http://<IP>:10000"
+	@echo "    - Langfuse:      http://<IP>:3000"
+	@echo "    - OpenMetadata:  http://<IP>:8585"
+	@echo "    - MinIO Console: http://<IP>:9001"
+	@echo ""
+
 # 显示 n8n 工作流 JSON（用于手动导入）
 n8n-export:
 	@cat infra/n8n/workflows.json

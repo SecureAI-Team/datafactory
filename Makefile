@@ -1,4 +1,9 @@
-﻿POSTGRES_USER ?= adf
+﻿# 从 .env 文件加载环境变量（如果存在）
+-include .env
+export
+
+# 默认值（如果 .env 不存在）
+POSTGRES_USER ?= adf
 POSTGRES_PASSWORD ?= adfpass
 POSTGRES_DB ?= adf
 MINIO_ROOT_USER ?= minio
@@ -7,7 +12,6 @@ BASIC_AUTH_USER ?= dev
 BASIC_AUTH_PASS ?= devpass
 
 COMPOSE ?= $(shell if command -v docker-compose >/dev/null 2>&1; then echo docker-compose; elif command -v docker >/dev/null 2>&1; then echo "docker compose"; else echo docker-compose; fi)
-export COMPOSE
 
 up:
 	$(COMPOSE) up -d

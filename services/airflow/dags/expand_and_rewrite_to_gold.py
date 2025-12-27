@@ -39,10 +39,13 @@ def build_ku_prompt(text: str, metadata: dict, params: list) -> str:
     # 格式化已提取的参数
     params_str = ""
     if params:
-        params_str = "\n".join([
-            f"- {p['name']}: {p.get('value', f'{p.get(\"min\")}-{p.get(\"max\")}')} {p['unit']}"
-            for p in params[:10]  # 最多显示10个
-        ])
+        param_lines = []
+        for p in params[:10]:  # 最多显示10个
+            if p.get('value') is not None:
+                param_lines.append(f"- {p['name']}: {p['value']} {p['unit']}")
+            else:
+                param_lines.append(f"- {p['name']}: {p.get('min')}-{p.get('max')} {p['unit']}")
+        params_str = "\n".join(param_lines)
     
     prompt = f"""你是一个知识工程师。请将以下文本转换为结构化的知识单元（Knowledge Unit）。
 

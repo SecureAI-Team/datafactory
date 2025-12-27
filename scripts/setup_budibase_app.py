@@ -37,10 +37,22 @@ def create_app():
         }
     )
     
-    if response.status_code == 200:
-        app = response.json()
-        print(f"✓ 应用创建成功: {app.get('_id')}")
-        return app
+    print(f"  响应状态: {response.status_code}")
+    
+    if response.status_code in [200, 201]:
+        try:
+            app = response.json()
+            # Budibase API 可能返回 data 包装或直接返回
+            if isinstance(app, dict):
+                app_data = app.get("data", app)
+                app_id = app_data.get("_id") or app_data.get("appId") or app_data.get("id")
+                print(f"✓ 应用创建成功: {app_id}")
+                print(f"  完整响应: {app}")
+                return {"_id": app_id, **app_data}
+        except Exception as e:
+            print(f"  解析响应失败: {e}")
+            print(f"  原始响应: {response.text}")
+        return None
     else:
         print(f"✗ 创建失败: {response.text}")
         return None
@@ -49,147 +61,55 @@ def create_app():
 def create_datasource(app_id: str):
     """创建 REST 数据源"""
     print("创建 API 数据源...")
-    
-    response = requests.post(
-        f"{BUDIBASE_URL}/api/public/v1/applications/{app_id}/datasources",
-        headers=get_headers(),
-        json={
-            "name": "AI Data Factory API",
-            "type": "REST",
-            "config": {
-                "url": API_URL,
-                "defaultHeaders": {
-                    "Content-Type": "application/json"
-                }
-            }
-        }
-    )
-    
-    if response.status_code == 200:
-        ds = response.json()
-        print(f"✓ 数据源创建成功: {ds.get('_id')}")
-        return ds
-    else:
-        print(f"✗ 创建失败: {response.text}")
-        return None
+    print("  注意: Budibase Public API 不支持创建数据源，请手动配置")
+    print(f"""
+  手动配置步骤:
+  1. 打开应用: http://localhost:10000
+  2. 进入应用 -> Data -> Add data source -> REST API
+  3. 配置:
+     - Name: AI Data Factory API
+     - URL: {API_URL}
+     - Default Headers: Content-Type: application/json
+""")
+    # 返回模拟的数据源 ID
+    return {"_id": "manual-config-required"}
 
 
 def create_queries(app_id: str, datasource_id: str):
     """创建 API 查询"""
     print("创建 API 查询...")
+    print("  注意: Budibase Public API 不支持创建查询，请手动配置")
     
-    queries = [
-        {
-            "name": "获取图谱统计",
-            "queryVerb": "read",
-            "fields": {
-                "path": "/v1/kg/stats",
-                "headers": {},
-                "queryString": ""
-            }
-        },
-        {
-            "name": "搜索知识图谱",
-            "queryVerb": "read",
-            "fields": {
-                "path": "/v1/kg/search",
-                "headers": {},
-                "queryString": "q={{query}}"
-            },
-            "parameters": [
-                {"name": "query", "default": ""}
-            ]
-        },
-        {
-            "name": "获取热门内容",
-            "queryVerb": "read",
-            "fields": {
-                "path": "/v1/recommend/popular",
-                "headers": {},
-                "queryString": "limit=10"
-            }
-        },
-        {
-            "name": "获取推荐",
-            "queryVerb": "read",
-            "fields": {
-                "path": "/v1/recommend",
-                "headers": {},
-                "queryString": "user_id={{user_id}}&limit=5"
-            },
-            "parameters": [
-                {"name": "user_id", "default": ""}
-            ]
-        },
-        {
-            "name": "抽取实体",
-            "queryVerb": "create",
-            "fields": {
-                "path": "/v1/kg/extract",
-                "headers": {"Content-Type": "application/json"},
-                "requestBody": '{"text": "{{text}}"}'
-            },
-            "parameters": [
-                {"name": "text", "default": ""}
-            ]
-        },
-        {
-            "name": "导入到图谱",
-            "queryVerb": "create",
-            "fields": {
-                "path": "/v1/kg/import",
-                "headers": {"Content-Type": "application/json"},
-                "requestBody": '{"text": "{{text}}", "extract_relations": true}'
-            },
-            "parameters": [
-                {"name": "text", "default": ""}
-            ]
-        },
-        {
-            "name": "生成摘要",
-            "queryVerb": "create",
-            "fields": {
-                "path": "/v1/summary/generate",
-                "headers": {"Content-Type": "application/json"},
-                "requestBody": '{"conversation_id": "{{conversation_id}}", "turns": []}'
-            },
-            "parameters": [
-                {"name": "conversation_id", "default": ""}
-            ]
-        },
-        {
-            "name": "分析图片",
-            "queryVerb": "create",
-            "fields": {
-                "path": "/v1/vision/analyze-url",
-                "headers": {"Content-Type": "application/json"},
-                "requestBody": '{"image_url": "{{image_url}}", "question": "{{question}}", "task_type": "general_qa"}'
-            },
-            "parameters": [
-                {"name": "image_url", "default": ""},
-                {"name": "question", "default": "描述这张图片"}
-            ]
-        }
+    queries_info = [
+        ("获取图谱统计", "GET", "/v1/kg/stats"),
+        ("搜索知识图谱", "GET", "/v1/kg/search?q={{query}}"),
+        ("获取所有节点", "GET", "/v1/kg/all-nodes?limit=50"),
+        ("获取热门内容", "GET", "/v1/recommend/popular?limit=10"),
+        ("获取推荐", "GET", "/v1/recommend?user_id={{user_id}}&limit=5"),
+        ("抽取实体", "POST", "/v1/kg/extract"),
+        ("导入到图谱", "POST", "/v1/kg/import"),
+        ("生成摘要", "POST", "/v1/summary/generate"),
+        ("分析图片", "POST", "/v1/vision/analyze-url"),
     ]
     
-    created = []
-    for query in queries:
-        query["datasourceId"] = datasource_id
-        
-        response = requests.post(
-            f"{BUDIBASE_URL}/api/public/v1/applications/{app_id}/queries",
-            headers=get_headers(),
-            json=query
-        )
-        
-        if response.status_code == 200:
-            q = response.json()
-            print(f"  ✓ 查询 '{query['name']}' 创建成功")
-            created.append(q)
-        else:
-            print(f"  ✗ 查询 '{query['name']}' 创建失败: {response.text}")
+    print(f"""
+  请在 Budibase 中手动创建以下查询:
+  
+  | 名称 | 方法 | 路径 |
+  |------|------|------|""")
     
-    return created
+    for name, method, path in queries_info:
+        print(f"  | {name} | {method} | {path} |")
+    
+    print(f"""
+  POST 请求的 Body 示例:
+  - 抽取实体: {{"text": "{{{{text}}}}"}}
+  - 导入图谱: {{"text": "{{{{text}}}}", "extract_relations": true}}
+  - 生成摘要: {{"conversation_id": "{{{{conv_id}}}}", "turns": []}}
+  - 分析图片: {{"image_url": "{{{{url}}}}", "question": "{{{{q}}}}"}}
+""")
+    
+    return []
 
 
 def create_screens(app_id: str, queries: list):

@@ -32,7 +32,7 @@ def create_app():
         f"{BUDIBASE_URL}/api/public/v1/applications",
         headers=get_headers(),
         json={
-            "name": "AI Data Factory 控制台",
+            "name": "AI Data Factory Console",
             "useTemplate": False,
         }
     )

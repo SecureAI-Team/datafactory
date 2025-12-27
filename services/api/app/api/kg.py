@@ -363,3 +363,71 @@ async def health_check():
             "error": str(e),
         }
 
+
+@router.get("/all-nodes")
+async def get_all_nodes(limit: int = Query(50, description="返回数量")):
+    """调试：获取所有节点"""
+    try:
+        kg = get_knowledge_graph()
+        
+        with kg.session() as session:
+            query = """
+            MATCH (n)
+            RETURN n, labels(n) as labels, elementId(n) as id
+            LIMIT $limit
+            """
+            records = session.run(query, limit=limit)
+            
+            nodes = []
+            for record in records:
+                node = record["n"]
+                nodes.append({
+                    "id": record["id"],
+                    "labels": record["labels"],
+                    "properties": dict(node),
+                })
+            
+            return {
+                "count": len(nodes),
+                "nodes": nodes,
+            }
+            
+    except Exception as e:
+        logger.error(f"Get all nodes failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/cypher")
+async def run_cypher(
+    query: str = Query(..., description="Cypher 查询"),
+):
+    """调试：直接运行 Cypher 查询"""
+    try:
+        kg = get_knowledge_graph()
+        
+        with kg.session() as session:
+            records = session.run(query)
+            
+            results = []
+            for record in records:
+                row = {}
+                for key in record.keys():
+                    value = record[key]
+                    # 处理 Neo4j 节点对象
+                    if hasattr(value, 'items'):
+                        row[key] = dict(value)
+                    elif hasattr(value, 'labels'):
+                        row[key] = {
+                            "labels": list(value.labels),
+                            "properties": dict(value),
+                        }
+                    else:
+                        row[key] = value
+                results.append(row)
+            
+            return {"results": results}
+            
+    except Exception as e:
+        logger.error(f"Cypher query failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+

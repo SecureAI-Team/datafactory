@@ -36,10 +36,13 @@ class RecordBehaviorRequest(BaseModel):
     behavior_type: str  # query/view/click/feedback
     target_type: Optional[str] = None  # ku/document/scenario
     target_id: Optional[str] = None
+    ku_id: Optional[str] = None  # 简写，等同于 target_type=ku, target_id=ku_id
     query: Optional[str] = None
     intent_type: Optional[str] = None
     scenario_id: Optional[str] = None
     session_id: Optional[str] = None
+    is_positive: Optional[bool] = None  # 用于 feedback 类型
+    rating: Optional[int] = None  # 评分 1-5
     metadata: Optional[dict] = None
 
 
@@ -75,18 +78,34 @@ async def track_behavior(request: RecordBehaviorRequest):
     """
     try:
         behavior_type = BehaviorType(request.behavior_type)
-        target_type = TargetType(request.target_type) if request.target_type else None
+        
+        # 处理 ku_id 简写
+        target_type = None
+        target_id = request.target_id
+        
+        if request.ku_id:
+            target_type = TargetType.KU
+            target_id = request.ku_id
+        elif request.target_type:
+            target_type = TargetType(request.target_type)
+        
+        # 构建 metadata
+        metadata = request.metadata or {}
+        if request.is_positive is not None:
+            metadata["positive"] = request.is_positive
+        if request.rating is not None:
+            metadata["rating"] = request.rating
         
         record_behavior(
             user_id=request.user_id,
             behavior_type=behavior_type,
             target_type=target_type,
-            target_id=request.target_id,
+            target_id=target_id,
             query=request.query or "",
             intent_type=request.intent_type or "",
             scenario_id=request.scenario_id or "",
             session_id=request.session_id or "",
-            metadata=request.metadata,
+            metadata=metadata,
         )
         
         return {"status": "recorded", "behavior_type": request.behavior_type}

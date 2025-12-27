@@ -431,3 +431,44 @@ async def run_cypher(
         logger.error(f"Cypher query failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/debug-search")
+async def debug_search(q: str = Query(..., description="搜索词")):
+    """调试：测试 full_text_search 并返回详细信息"""
+    try:
+        kg = get_knowledge_graph()
+        
+        # 1. 先用 Cypher 直接查
+        direct_results = []
+        with kg.session() as session:
+            cypher = """
+            MATCH (n)
+            WHERE toLower(n.name) CONTAINS toLower($query)
+               OR toLower(coalesce(n.text, '')) CONTAINS toLower($query)
+            RETURN n, elementId(n) as id, labels(n) as node_labels
+            LIMIT 10
+            """
+            records = session.run(cypher, query=q)
+            for record in records:
+                direct_results.append({
+                    "id": record["id"],
+                    "labels": record["node_labels"],
+                    "properties": dict(record["n"]),
+                })
+        
+        # 2. 用 full_text_search 方法
+        nodes = kg.full_text_search(q, limit=10)
+        method_results = [n.to_dict() for n in nodes]
+        
+        return {
+            "query": q,
+            "direct_cypher_count": len(direct_results),
+            "direct_cypher_results": direct_results,
+            "method_count": len(method_results),
+            "method_results": method_results,
+        }
+        
+    except Exception as e:
+        logger.error(f"Debug search failed: {e}")
+        return {"error": str(e)}
+

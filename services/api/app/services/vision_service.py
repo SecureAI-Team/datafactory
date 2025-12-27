@@ -49,10 +49,11 @@ class VisionService:
         base_url: str = None,
         model: str = None,
     ):
-        self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY", "")
+        # 尝试多个可能的环境变量名
+        self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY") or os.getenv("UPSTREAM_LLM_API_KEY", "")
         self.base_url = base_url or os.getenv(
             "QWEN_VL_BASE_URL",
-            "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            os.getenv("UPSTREAM_LLM_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
         )
         self.model = model or os.getenv("QWEN_VL_MODEL", "qwen-vl-max")
         

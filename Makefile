@@ -188,6 +188,44 @@ print('✓ Intent recognition OK')"
 verify-phase1:
 	python scripts/upgrade_phase1.py --verify-only
 
+# Phase 2 升级（上下文管理 + 计算引擎 + 反馈优化）
+upgrade-phase2:
+	@echo "=== Phase 2 升级: 上下文管理 + 计算引擎 + 反馈优化 ==="
+	$(COMPOSE) run --rm api alembic upgrade head || true
+	$(COMPOSE) build --no-cache api
+	$(COMPOSE) up -d api redis
+	@sleep 5
+	@echo ""
+	@echo "验证新模块..."
+	$(COMPOSE) exec -T api python -c "\
+from app.services.calculation_engine import try_calculate; \
+result = try_calculate('产能5000片/小时需要几台设备', {'需求产能': {'value': 5000}}); \
+print(f'Calculation: {result.result_value if result else None}'); \
+assert result and result.success, 'Calculation failed'; \
+print('✓ Calculation engine OK')"
+	@echo ""
+	$(COMPOSE) exec -T api python -c "\
+from app.services.context_manager import get_or_create_context; \
+ctx = get_or_create_context('test'); \
+ctx.add_turn('user', 'test'); \
+print(f'Context turns: {len(ctx.turns)}'); \
+print('✓ Context manager OK')"
+	@echo ""
+	@echo "=== Phase 2 升级完成 ==="
+	@echo "新增功能:"
+	@echo "  - 对话上下文管理（实体跟踪、偏好记忆、历史压缩）"
+	@echo "  - 计算引擎（设备数量、精度校验、成本/ROI计算）"
+	@echo "  - 反馈优化器（反馈检测、统计分析、Prompt增强）"
+	@echo ""
+	@echo "调试接口:"
+	@echo "  POST /v1/debug/calculate        - 测试计算引擎"
+	@echo "  GET  /v1/debug/context/{id}     - 查看对话上下文"
+	@echo "  GET  /v1/debug/feedback-stats   - 反馈统计"
+
+# 验证 Phase 2 升级
+verify-phase2:
+	python scripts/upgrade_phase2.py --verify-only
+
 # 重新部署 Airflow DAGs（更新代码后）
 reload-dags:
 	@echo "=== 重新加载 Airflow DAGs ==="

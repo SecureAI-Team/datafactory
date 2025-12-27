@@ -1,6 +1,6 @@
 ﻿"""
 OpenAI 兼容的 Chat Completions Gateway
-增强版：意图识别 + 场景路由 + 澄清问卷 + RAG
+Phase 2: 意图识别 + 场景路由 + 澄清问卷 + 上下文管理 + 计算引擎 + 反馈优化
 """
 import json
 import uuid
@@ -28,6 +28,23 @@ from ..services.clarification import (
     get_clarification_engine,
 )
 from ..services.material_manager import get_material_repository
+from ..services.context_manager import (
+    get_or_create_context,
+    save_context,
+    get_context_manager,
+    ConversationContext,
+    ConversationState,
+)
+from ..services.calculation_engine import (
+    try_calculate,
+    get_calculation_engine,
+    CalculationResult,
+)
+from ..services.feedback_optimizer import (
+    detect_and_record_natural_feedback,
+    get_feedback_optimizer,
+    FeedbackType,
+)
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -274,16 +291,20 @@ async def gateway(
     body: dict,
     background_tasks: BackgroundTasks,
     x_scenario_id: str = Header(None),
+    x_conversation_id: str = Header(None),
     authorization: str = Header(None),
 ):
     """
     OpenAI-compatible chat completions endpoint with RAG.
-    增强版：意图识别 + 场景路由 + 澄清问卷 + RAG + 反馈识别
+    Phase 2: 意图识别 + 场景路由 + 澄清问卷 + 上下文管理 + 计算引擎 + 反馈优化
     """
     trace_id = str(uuid.uuid4())
     start_time = time.time()
     
-    logger.info(f"Chat request received, trace_id={trace_id}")
+    # 使用传入的会话ID或生成新的
+    conversation_id = x_conversation_id or trace_id
+    
+    logger.info(f"Chat request received, trace_id={trace_id}, conv_id={conversation_id}")
     
     # Get the user's query
     query = body["messages"][-1]["content"]
@@ -293,11 +314,31 @@ async def gateway(
     # 提取对话历史
     history = body["messages"][:-1] if len(body["messages"]) > 1 else []
     
+    # ========== Step 0: 获取/创建对话上下文 ==========
+    context = get_or_create_context(conversation_id)
+    
+    # 从历史中提取实体
+    ctx_manager = get_context_manager()
+    extracted_entities = ctx_manager.extract_entities_from_text(query, len(context.turns))
+    
     # ========== Step 1: 检测反馈 ==========
     is_feedback, is_positive, feedback_type = detect_feedback_intent(query)
     
     if is_feedback and feedback_type in ("positive", "negative"):
         logger.info(f"User feedback detected: {feedback_type}")
+        
+        # 记录反馈
+        last_response = context.turns[-1].content if context.turns else ""
+        last_query = context.turns[-2].content if len(context.turns) >= 2 else query
+        
+        detect_and_record_natural_feedback(
+            text=query,
+            conversation_id=conversation_id,
+            query=last_query,
+            response=last_response,
+            intent_type=context.turns[-1].intent_type if context.turns else None,
+            scenario_id=context.current_scenario,
+        )
         
         return JSONResponse(content={
             "id": f"chatcmpl-{trace_id}",
@@ -370,8 +411,15 @@ async def gateway(
         )
     
     # ========== Step 5: 场景化检索 ==========
-    # 合并实体和澄清上下文
-    entities = {**intent_result.entities, **clarification_context}
+    # 合并实体：用户输入 + 澄清回复 + 上下文历史
+    entities = {
+        **intent_result.entities,
+        **clarification_context,
+        **{e.name: e.value for e in extracted_entities},
+    }
+    
+    # 从上下文中补充参数
+    context_params = {k: v.value for k, v in context.entities.items()}
     
     # 执行检索
     hits = search(
@@ -380,6 +428,27 @@ async def gateway(
         entities=entities,
         top_k=5,
     )
+    
+    # ========== Step 5.5: 计算引擎 ==========
+    calculation_result = None
+    if intent_result.intent_type == IntentType.CALCULATION:
+        # 从检索结果中提取参数
+        retrieved_params = []
+        for h in hits:
+            retrieved_params.extend(h.get("params", []))
+        
+        calculation_result = try_calculate(
+            query=query,
+            entities=entities,
+            context_params=context_params,
+            retrieved_params=retrieved_params,
+        )
+        
+        if calculation_result:
+            logger.info(
+                f"Calculation: {calculation_result.calculation_type.value}, "
+                f"success={calculation_result.success}"
+            )
     
     # 获取层级化材料（如果匹配到场景）
     solutions_info = []
@@ -403,12 +472,31 @@ async def gateway(
             output={
                 "hits": len(hits),
                 "solutions": len(solutions_info),
+                "calculation": calculation_result.calculation_type.value if calculation_result else None,
             },
         )
     
     # ========== Step 6: 构建 Prompt ==========
     context_prompt = build_context_prompt(hits, intent_result, solutions_info)
-    system_prompt = build_system_prompt(intent_result)
+    
+    # 添加计算结果到上下文
+    if calculation_result and calculation_result.success:
+        calc_engine = get_calculation_engine()
+        calc_text = calc_engine.format_calculation_response(calculation_result)
+        context_prompt = f"【计算结果】\n{calc_text}\n\n{context_prompt}"
+    
+    # 添加对话上下文
+    conv_context_prompt = context.build_context_prompt()
+    if conv_context_prompt:
+        context_prompt = f"{conv_context_prompt}\n\n{context_prompt}"
+    
+    # 使用反馈优化器增强 Prompt
+    optimizer = get_feedback_optimizer()
+    system_prompt = optimizer.build_enhanced_prompt(
+        build_system_prompt(intent_result),
+        intent_type=intent_result.intent_type.value,
+        scenario_id=intent_result.scenario_ids[0] if intent_result.scenario_ids else None,
+    )
     
     # Build messages
     messages = [
@@ -444,6 +532,24 @@ async def gateway(
                     yield f"data: {json.dumps(chunk_data)}\n\n"
                 yield "data: [DONE]\n\n"
             finally:
+                # 保存对话上下文
+                try:
+                    context.add_turn(
+                        role="user",
+                        content=query,
+                        intent_type=intent_result.intent_type.value,
+                        scenario_ids=intent_result.scenario_ids,
+                        entities=[{"name": e.name, "value": e.value, "entity_type": e.entity_type, "source_turn": e.source_turn} for e in extracted_entities],
+                    )
+                    context.add_turn(
+                        role="assistant",
+                        content=full_response[:1000],  # 截断以节省空间
+                        intent_type=intent_result.intent_type.value,
+                    )
+                    save_context(context)
+                except Exception as e:
+                    logger.error(f"Context save error: {e}")
+                
                 try:
                     if generation:
                         generation.end(output=full_response)
@@ -463,6 +569,25 @@ async def gateway(
             stream=False,
         )
         response_content = response.choices[0].message.content if response.choices else ""
+        
+        # ========== Step 8: 保存对话上下文 ==========
+        try:
+            context.add_turn(
+                role="user",
+                content=query,
+                intent_type=intent_result.intent_type.value,
+                scenario_ids=intent_result.scenario_ids,
+                entities=[{"name": e.name, "value": e.value, "entity_type": e.entity_type, "source_turn": e.source_turn} for e in extracted_entities],
+            )
+            context.add_turn(
+                role="assistant",
+                content=response_content[:1000],
+                intent_type=intent_result.intent_type.value,
+            )
+            save_context(context)
+            logger.info(f"Context saved: {conversation_id}, turns={len(context.turns)}")
+        except Exception as e:
+            logger.error(f"Context save error: {e}")
         
         # End generation span and flush to Langfuse
         try:
@@ -568,4 +693,112 @@ async def debug_search(body: dict):
             }
             for h in hits
         ]
+    }
+
+
+@router.post("/debug/calculate")
+async def debug_calculate(body: dict):
+    """调试接口：测试计算引擎"""
+    query = body.get("query", "")
+    entities = body.get("entities", {})
+    context_params = body.get("context_params", {})
+    
+    result = try_calculate(
+        query=query,
+        entities=entities,
+        context_params=context_params,
+    )
+    
+    if result:
+        engine = get_calculation_engine()
+        return {
+            "query": query,
+            "calculation_type": result.calculation_type.value,
+            "success": result.success,
+            "result_value": result.result_value,
+            "result_unit": result.result_unit,
+            "result_text": result.result_text,
+            "reasoning": result.reasoning,
+            "inputs_used": result.inputs_used,
+            "missing_inputs": result.missing_inputs,
+            "formatted_response": engine.format_calculation_response(result),
+        }
+    else:
+        return {
+            "query": query,
+            "calculation_detected": False,
+            "message": "No calculation pattern detected in query",
+        }
+
+
+@router.get("/debug/context/{conversation_id}")
+async def debug_get_context(conversation_id: str):
+    """调试接口：获取对话上下文"""
+    ctx = get_context_manager().get(conversation_id)
+    
+    if ctx:
+        return {
+            "conversation_id": conversation_id,
+            "state": ctx.state.value,
+            "turns_count": len(ctx.turns),
+            "entities": {k: v.value for k, v in ctx.entities.items()},
+            "preferences": {k: v.value for k, v in ctx.preferences.items()},
+            "current_scenario": ctx.current_scenario,
+            "recommended_solutions": ctx.recommended_solutions,
+            "recent_turns": [
+                {"role": t.role, "content": t.content[:100], "intent": t.intent_type}
+                for t in ctx.turns[-5:]
+            ],
+            "context_prompt_preview": ctx.build_context_prompt()[:500],
+        }
+    else:
+        return {"error": "Context not found", "conversation_id": conversation_id}
+
+
+@router.delete("/debug/context/{conversation_id}")
+async def debug_delete_context(conversation_id: str):
+    """调试接口：删除对话上下文"""
+    get_context_manager().delete(conversation_id)
+    return {"deleted": conversation_id}
+
+
+@router.get("/debug/feedback-stats")
+async def debug_feedback_stats(days: int = 7, intent_type: str = None, scenario_id: str = None):
+    """调试接口：获取反馈统计"""
+    optimizer = get_feedback_optimizer()
+    stats = optimizer.get_stats(days=days, intent_type=intent_type, scenario_id=scenario_id)
+    
+    return {
+        "period_days": days,
+        "total_count": stats.total_count,
+        "positive_count": stats.positive_count,
+        "negative_count": stats.negative_count,
+        "positive_rate": stats.positive_count / stats.total_count * 100 if stats.total_count > 0 else 0,
+        "average_rating": stats.average_rating,
+        "by_intent": stats.by_intent,
+        "by_scenario": stats.by_scenario,
+        "common_issues": stats.common_issues,
+    }
+
+
+@router.post("/debug/record-feedback")
+async def debug_record_feedback(body: dict):
+    """调试接口：手动记录反馈"""
+    from ..services.feedback_optimizer import record_feedback
+    
+    record = record_feedback(
+        conversation_id=body.get("conversation_id", "test"),
+        feedback_type=FeedbackType(body.get("feedback_type", "explicit_positive")),
+        query=body.get("query", ""),
+        response=body.get("response", ""),
+        rating=body.get("rating"),
+        text=body.get("text"),
+        intent_type=body.get("intent_type"),
+        scenario_id=body.get("scenario_id"),
+    )
+    
+    return {
+        "feedback_id": record.feedback_id,
+        "feedback_type": record.feedback_type.value,
+        "recorded_at": record.created_at,
     }

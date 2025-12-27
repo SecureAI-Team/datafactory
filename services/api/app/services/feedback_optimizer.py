@@ -1,12 +1,14 @@
 """
-用户反馈收集和 Prompt 自动优化机制
+反馈收集与优化
+收集用户反馈，分析模式，优化 Prompt
 """
+import time
 import json
 import logging
+from typing import Optional, List, Dict, Any, Tuple
+from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any
 from enum import Enum
-from pydantic import BaseModel
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)
@@ -14,243 +16,458 @@ logger = logging.getLogger(__name__)
 
 class FeedbackType(str, Enum):
     """反馈类型"""
-    THUMBS_UP = "thumbs_up"
-    THUMBS_DOWN = "thumbs_down"
-    RATING = "rating"  # 1-5 分
-    TEXT = "text"      # 文字反馈
-    CORRECTION = "correction"  # 纠正答案
+    EXPLICIT_POSITIVE = "explicit_positive"    # 明确正面（点击满意）
+    EXPLICIT_NEGATIVE = "explicit_negative"    # 明确负面（点击不满意）
+    NATURAL_POSITIVE = "natural_positive"      # 自然语言正面
+    NATURAL_NEGATIVE = "natural_negative"      # 自然语言负面
+    FOLLOW_UP = "follow_up"                    # 追问（隐式不满意）
+    CLARIFICATION_SUCCESS = "clarif_success"  # 澄清成功
+    CLARIFICATION_FAIL = "clarif_fail"        # 澄清失败
 
 
-class FeedbackRecord(BaseModel):
+class FeedbackDimension(str, Enum):
+    """反馈维度"""
+    RELEVANCE = "relevance"           # 相关性
+    ACCURACY = "accuracy"             # 准确性
+    COMPLETENESS = "completeness"     # 完整性
+    CLARITY = "clarity"               # 清晰度
+    ACTIONABILITY = "actionability"   # 可操作性
+
+
+@dataclass
+class FeedbackRecord:
     """反馈记录"""
-    id: str
+    feedback_id: str
     conversation_id: str
-    message_id: str
-    user_query: str
-    assistant_response: str
+    message_id: Optional[str]
+    
     feedback_type: FeedbackType
-    feedback_value: Any  # 具体反馈值
-    correction_text: Optional[str] = None  # 用户提供的正确答案
-    retrieved_sources: List[str] = []  # 检索到的来源
-    created_at: datetime = None
+    dimension: Optional[FeedbackDimension] = None
+    rating: Optional[int] = None      # 1-5 评分
+    text: Optional[str] = None        # 文本反馈
     
-    def __init__(self, **data):
-        if data.get('created_at') is None:
-            data['created_at'] = datetime.utcnow()
-        super().__init__(**data)
+    # 上下文信息
+    query: str = ""
+    response_preview: str = ""
+    intent_type: Optional[str] = None
+    scenario_id: Optional[str] = None
     
-    @property
-    def is_positive(self) -> bool:
-        """是否为正面反馈"""
-        if self.feedback_type == FeedbackType.THUMBS_UP:
-            return True
-        if self.feedback_type == FeedbackType.THUMBS_DOWN:
-            return False
-        if self.feedback_type == FeedbackType.RATING:
-            return self.feedback_value >= 4
-        return False
-    
-    @property
-    def is_negative(self) -> bool:
-        """是否为负面反馈"""
-        if self.feedback_type == FeedbackType.THUMBS_DOWN:
-            return True
-        if self.feedback_type == FeedbackType.CORRECTION:
-            return True
-        if self.feedback_type == FeedbackType.RATING:
-            return self.feedback_value <= 2
-        return False
+    # 元数据
+    created_at: float = field(default_factory=time.time)
+    processed: bool = False
 
 
-class PromptOptimizer:
-    """
-    基于反馈的 Prompt 优化器
+@dataclass
+class FeedbackStats:
+    """反馈统计"""
+    total_count: int = 0
+    positive_count: int = 0
+    negative_count: int = 0
+    average_rating: float = 0.0
     
-    策略：
-    1. 收集负面反馈案例
-    2. 聚类相似问题
-    3. 生成 Few-shot 示例
-    4. 动态调整 System Prompt
-    """
+    by_intent: Dict[str, Dict] = field(default_factory=dict)
+    by_scenario: Dict[str, Dict] = field(default_factory=dict)
     
-    def __init__(self):
-        self.feedback_records: List[FeedbackRecord] = []
-        self.negative_examples: List[Dict] = []  # 负面案例库
-        self.positive_examples: List[Dict] = []  # 正面案例库
-        self.optimized_prompts: Dict[str, str] = {}  # 场景 -> 优化后的 Prompt
-        self.last_optimization: Optional[datetime] = None
+    common_issues: List[Dict] = field(default_factory=list)
+    improvement_suggestions: List[str] = field(default_factory=list)
+
+
+@dataclass
+class PromptOptimization:
+    """Prompt 优化建议"""
+    target: str                       # 优化目标（intent/scenario/general）
+    target_id: Optional[str] = None   # 目标 ID
     
-    def add_feedback(self, feedback: FeedbackRecord):
-        """添加反馈记录"""
-        self.feedback_records.append(feedback)
+    original_prompt: str = ""
+    suggested_prompt: str = ""
+    
+    few_shot_examples: List[Dict] = field(default_factory=list)
+    negative_examples: List[Dict] = field(default_factory=list)
+    
+    reasoning: str = ""
+    confidence: float = 0.5
+
+
+class FeedbackOptimizer:
+    """反馈优化器"""
+    
+    def __init__(self, storage_backend: str = "memory"):
+        self.storage_backend = storage_backend
         
-        if feedback.is_negative:
-            self.negative_examples.append({
-                "query": feedback.user_query,
-                "bad_response": feedback.assistant_response,
-                "correction": feedback.correction_text,
-                "sources": feedback.retrieved_sources,
-                "timestamp": feedback.created_at.isoformat(),
-            })
-            logger.info(f"Added negative feedback: {feedback.user_query[:50]}...")
+        # 内存存储
+        self._feedback_records: List[FeedbackRecord] = []
+        self._optimization_cache: Dict[str, PromptOptimization] = {}
         
-        elif feedback.is_positive:
-            self.positive_examples.append({
-                "query": feedback.user_query,
-                "good_response": feedback.assistant_response,
-                "sources": feedback.retrieved_sources,
-                "timestamp": feedback.created_at.isoformat(),
-            })
-            logger.info(f"Added positive feedback: {feedback.user_query[:50]}...")
+        # 正面/负面关键词
+        self.positive_keywords = [
+            "有帮助", "很好", "不错", "满意", "谢谢", "感谢", "太棒了",
+            "完美", "正是我需要的", "解决了", "清楚", "明白了",
+            "学到了", "有用", "专业",
+        ]
+        self.negative_keywords = [
+            "不满意", "没有帮助", "不对", "错了", "不准确", "有问题",
+            "需要改进", "太简单", "不够详细", "没说清楚", "看不懂",
+            "答非所问", "不相关", "废话", "没用",
+        ]
         
-        # 每积累 10 条负面反馈，触发优化
-        if len(self.negative_examples) % 10 == 0 and len(self.negative_examples) > 0:
-            self.trigger_optimization()
+        # 追问模式关键词
+        self.follow_up_patterns = [
+            "你没说", "再解释", "什么意思", "不明白", "能详细",
+            "刚才说的", "上面提到的", "具体说说",
+        ]
     
-    def get_feedback_stats(self) -> Dict:
+    def detect_natural_feedback(self, text: str) -> Optional[Tuple[FeedbackType, float]]:
+        """检测自然语言反馈"""
+        text_lower = text.lower()
+        
+        # 正面反馈
+        positive_count = sum(1 for kw in self.positive_keywords if kw in text_lower)
+        if positive_count > 0:
+            confidence = min(positive_count * 0.3 + 0.4, 1.0)
+            return FeedbackType.NATURAL_POSITIVE, confidence
+        
+        # 负面反馈
+        negative_count = sum(1 for kw in self.negative_keywords if kw in text_lower)
+        if negative_count > 0:
+            confidence = min(negative_count * 0.3 + 0.4, 1.0)
+            return FeedbackType.NATURAL_NEGATIVE, confidence
+        
+        # 追问检测
+        follow_up_count = sum(1 for kw in self.follow_up_patterns if kw in text_lower)
+        if follow_up_count > 0:
+            return FeedbackType.FOLLOW_UP, 0.5
+        
+        return None
+    
+    def record_feedback(
+        self,
+        conversation_id: str,
+        feedback_type: FeedbackType,
+        query: str,
+        response: str,
+        message_id: str = None,
+        rating: int = None,
+        text: str = None,
+        intent_type: str = None,
+        scenario_id: str = None,
+        dimension: FeedbackDimension = None,
+    ) -> FeedbackRecord:
+        """记录反馈"""
+        import uuid
+        
+        record = FeedbackRecord(
+            feedback_id=str(uuid.uuid4()),
+            conversation_id=conversation_id,
+            message_id=message_id,
+            feedback_type=feedback_type,
+            dimension=dimension,
+            rating=rating,
+            text=text,
+            query=query,
+            response_preview=response[:200] if response else "",
+            intent_type=intent_type,
+            scenario_id=scenario_id,
+        )
+        
+        self._feedback_records.append(record)
+        
+        logger.info(
+            f"Feedback recorded: {feedback_type.value}, "
+            f"intent={intent_type}, scenario={scenario_id}"
+        )
+        
+        # 触发实时分析
+        self._analyze_recent_feedback()
+        
+        return record
+    
+    def get_stats(
+        self,
+        days: int = 7,
+        intent_type: str = None,
+        scenario_id: str = None,
+    ) -> FeedbackStats:
         """获取反馈统计"""
-        total = len(self.feedback_records)
-        if total == 0:
-            return {"total": 0, "positive_rate": 0, "negative_rate": 0}
+        cutoff = time.time() - days * 86400
         
-        positive = sum(1 for f in self.feedback_records if f.is_positive)
-        negative = sum(1 for f in self.feedback_records if f.is_negative)
+        # 过滤记录
+        records = [
+            r for r in self._feedback_records
+            if r.created_at >= cutoff
+            and (intent_type is None or r.intent_type == intent_type)
+            and (scenario_id is None or r.scenario_id == scenario_id)
+        ]
         
-        return {
-            "total": total,
-            "positive": positive,
-            "negative": negative,
-            "positive_rate": positive / total,
-            "negative_rate": negative / total,
-            "last_optimization": self.last_optimization.isoformat() if self.last_optimization else None,
-        }
+        if not records:
+            return FeedbackStats()
+        
+        # 基础统计
+        positive = sum(
+            1 for r in records
+            if r.feedback_type in (FeedbackType.EXPLICIT_POSITIVE, FeedbackType.NATURAL_POSITIVE)
+        )
+        negative = sum(
+            1 for r in records
+            if r.feedback_type in (FeedbackType.EXPLICIT_NEGATIVE, FeedbackType.NATURAL_NEGATIVE, FeedbackType.FOLLOW_UP)
+        )
+        
+        ratings = [r.rating for r in records if r.rating is not None]
+        avg_rating = sum(ratings) / len(ratings) if ratings else 0
+        
+        # 按意图统计
+        by_intent = defaultdict(lambda: {"positive": 0, "negative": 0, "total": 0})
+        for r in records:
+            if r.intent_type:
+                by_intent[r.intent_type]["total"] += 1
+                if r.feedback_type in (FeedbackType.EXPLICIT_POSITIVE, FeedbackType.NATURAL_POSITIVE):
+                    by_intent[r.intent_type]["positive"] += 1
+                elif r.feedback_type in (FeedbackType.EXPLICIT_NEGATIVE, FeedbackType.NATURAL_NEGATIVE):
+                    by_intent[r.intent_type]["negative"] += 1
+        
+        # 按场景统计
+        by_scenario = defaultdict(lambda: {"positive": 0, "negative": 0, "total": 0})
+        for r in records:
+            if r.scenario_id:
+                by_scenario[r.scenario_id]["total"] += 1
+                if r.feedback_type in (FeedbackType.EXPLICIT_POSITIVE, FeedbackType.NATURAL_POSITIVE):
+                    by_scenario[r.scenario_id]["positive"] += 1
+                elif r.feedback_type in (FeedbackType.EXPLICIT_NEGATIVE, FeedbackType.NATURAL_NEGATIVE):
+                    by_scenario[r.scenario_id]["negative"] += 1
+        
+        # 分析常见问题
+        common_issues = self._analyze_common_issues(records)
+        
+        return FeedbackStats(
+            total_count=len(records),
+            positive_count=positive,
+            negative_count=negative,
+            average_rating=avg_rating,
+            by_intent=dict(by_intent),
+            by_scenario=dict(by_scenario),
+            common_issues=common_issues,
+        )
     
-    def get_few_shot_examples(self, query: str, max_examples: int = 3) -> List[Dict]:
-        """
-        获取与查询相关的 Few-shot 示例
-        优先使用有纠正的负面案例
-        """
-        examples = []
+    def _analyze_common_issues(self, records: List[FeedbackRecord]) -> List[Dict]:
+        """分析常见问题"""
+        issues = []
         
-        # 首先添加有纠正的案例（最有价值）
-        corrected = [e for e in self.negative_examples if e.get("correction")]
-        for ex in corrected[-max_examples:]:
-            examples.append({
-                "user": ex["query"],
-                "assistant": ex["correction"],
-                "note": "corrected_example"
+        # 负面反馈文本分析
+        negative_texts = [
+            r.text for r in records
+            if r.feedback_type in (FeedbackType.EXPLICIT_NEGATIVE, FeedbackType.NATURAL_NEGATIVE)
+            and r.text
+        ]
+        
+        # 简单关键词统计
+        issue_keywords = {
+            "不相关": "检索结果与问题不相关",
+            "不详细": "回答不够详细",
+            "太复杂": "回答过于复杂",
+            "不准确": "信息不准确",
+            "没有答案": "未能回答问题",
+        }
+        
+        for keyword, description in issue_keywords.items():
+            count = sum(1 for t in negative_texts if keyword in t)
+            if count > 0:
+                issues.append({
+                    "keyword": keyword,
+                    "description": description,
+                    "count": count,
+                    "percentage": count / len(negative_texts) * 100 if negative_texts else 0,
+                })
+        
+        return sorted(issues, key=lambda x: x["count"], reverse=True)
+    
+    def _analyze_recent_feedback(self):
+        """分析最近反馈，触发优化"""
+        recent = [
+            r for r in self._feedback_records[-50:]
+            if time.time() - r.created_at < 3600  # 最近1小时
+        ]
+        
+        if len(recent) < 5:
+            return
+        
+        # 检查负面反馈集中度
+        by_intent = defaultdict(list)
+        for r in recent:
+            if r.intent_type and r.feedback_type in (
+                FeedbackType.EXPLICIT_NEGATIVE,
+                FeedbackType.NATURAL_NEGATIVE,
+            ):
+                by_intent[r.intent_type].append(r)
+        
+        # 如果某意图负面反馈过多，生成优化建议
+        for intent_type, neg_records in by_intent.items():
+            if len(neg_records) >= 3:
+                self._generate_optimization(intent_type, neg_records)
+    
+    def _generate_optimization(
+        self,
+        intent_type: str,
+        negative_records: List[FeedbackRecord],
+    ):
+        """生成优化建议"""
+        optimization = PromptOptimization(
+            target="intent",
+            target_id=intent_type,
+            reasoning=f"最近 {len(negative_records)} 条负面反馈集中在 {intent_type} 意图",
+        )
+        
+        # 收集负面案例
+        for r in negative_records[:5]:
+            optimization.negative_examples.append({
+                "query": r.query,
+                "response": r.response_preview,
+                "issue": r.text or "未明确",
             })
         
-        # 补充正面案例
-        remaining = max_examples - len(examples)
-        if remaining > 0:
-            for ex in self.positive_examples[-remaining:]:
-                examples.append({
-                    "user": ex["query"],
-                    "assistant": ex["good_response"][:500],  # 截断
-                    "note": "positive_example"
-                })
+        # 生成改进建议
+        if any("不详细" in (r.text or "") for r in negative_records):
+            optimization.improvement_suggestions = [
+                "增加回答的详细程度",
+                "添加具体示例",
+                "分步骤说明",
+            ]
+        
+        if any("不相关" in (r.text or "") for r in negative_records):
+            optimization.improvement_suggestions = [
+                "优化检索关键词权重",
+                "增强意图识别准确度",
+                "缩小检索范围到更相关内容",
+            ]
+        
+        self._optimization_cache[f"intent:{intent_type}"] = optimization
+        
+        logger.info(f"Generated optimization suggestion for intent: {intent_type}")
+    
+    def get_optimization(
+        self,
+        intent_type: str = None,
+        scenario_id: str = None,
+    ) -> Optional[PromptOptimization]:
+        """获取优化建议"""
+        if intent_type:
+            return self._optimization_cache.get(f"intent:{intent_type}")
+        if scenario_id:
+            return self._optimization_cache.get(f"scenario:{scenario_id}")
+        return None
+    
+    def get_few_shot_examples(
+        self,
+        intent_type: str,
+        scenario_id: str = None,
+        limit: int = 3,
+    ) -> List[Dict]:
+        """获取 Few-shot 示例（从正面反馈中提取）"""
+        # 筛选正面反馈
+        positive = [
+            r for r in self._feedback_records
+            if r.feedback_type in (FeedbackType.EXPLICIT_POSITIVE, FeedbackType.NATURAL_POSITIVE)
+            and r.intent_type == intent_type
+            and (scenario_id is None or r.scenario_id == scenario_id)
+            and r.rating and r.rating >= 4
+        ]
+        
+        # 按评分排序
+        positive.sort(key=lambda x: x.rating or 0, reverse=True)
+        
+        examples = []
+        for r in positive[:limit]:
+            examples.append({
+                "query": r.query,
+                "response": r.response_preview,
+                "rating": r.rating,
+            })
         
         return examples
     
-    def get_optimization_hints(self) -> str:
-        """
-        根据反馈分析生成优化提示
-        """
-        if not self.negative_examples:
-            return ""
+    def build_enhanced_prompt(
+        self,
+        base_prompt: str,
+        intent_type: str,
+        scenario_id: str = None,
+    ) -> str:
+        """构建增强的 Prompt（包含 Few-shot 示例）"""
+        parts = [base_prompt]
         
-        # 分析常见问题模式
-        issues = []
-        
-        # 检查是否有来源引用问题
-        no_source_issues = sum(1 for e in self.negative_examples if not e.get("sources"))
-        if no_source_issues > 3:
-            issues.append("- 确保在回答中明确引用知识库来源")
-        
-        # 检查是否有答案不完整问题
-        short_responses = sum(1 for e in self.negative_examples 
-                             if len(e.get("bad_response", "")) < 100)
-        if short_responses > 3:
-            issues.append("- 提供更详细、完整的回答")
-        
-        # 添加通用改进建议
-        if self.negative_examples:
-            issues.append("- 如果不确定，请明确说明信息来源的局限性")
-            issues.append("- 对于复杂问题，建议分点回答")
-        
-        if issues:
-            return "\n\n【基于用户反馈的改进要求】\n" + "\n".join(issues)
-        return ""
-    
-    def trigger_optimization(self):
-        """
-        触发 Prompt 优化
-        分析反馈模式，生成优化建议
-        """
-        self.last_optimization = datetime.utcnow()
-        logger.info(f"Triggering prompt optimization with {len(self.negative_examples)} negative examples")
-        
-        # 这里可以调用 LLM 来分析反馈并生成优化建议
-        # 简化版本：基于规则生成
-        
-    def build_optimized_system_prompt(self, base_prompt: str, scenario: str = "default") -> str:
-        """
-        构建优化后的 System Prompt
-        """
         # 添加 Few-shot 示例
-        examples = self.get_few_shot_examples("", max_examples=2)
-        
-        # 添加优化提示
-        hints = self.get_optimization_hints()
-        
-        optimized = base_prompt
-        
-        if hints:
-            optimized += hints
-        
+        examples = self.get_few_shot_examples(intent_type, scenario_id)
         if examples:
-            optimized += "\n\n【参考回答示例】\n"
+            examples_text = "\n\n【优秀回答示例】\n"
             for i, ex in enumerate(examples, 1):
-                optimized += f"\n示例 {i}:\n用户: {ex['user'][:100]}...\n回答: {ex['assistant'][:200]}...\n"
+                examples_text += f"\n示例{i}:\n问题：{ex['query']}\n回答：{ex['response']}\n"
+            parts.append(examples_text)
         
-        return optimized
+        # 添加优化建议
+        optimization = self.get_optimization(intent_type=intent_type)
+        if optimization and optimization.improvement_suggestions:
+            suggestions = "\n".join(f"- {s}" for s in optimization.improvement_suggestions)
+            parts.append(f"\n\n【注意事项】\n{suggestions}")
+        
+        return "\n".join(parts)
+    
+    def export_feedback_data(self, days: int = 30) -> List[Dict]:
+        """导出反馈数据"""
+        cutoff = time.time() - days * 86400
+        
+        return [
+            asdict(r)
+            for r in self._feedback_records
+            if r.created_at >= cutoff
+        ]
 
 
-# 全局优化器实例
-_optimizer = PromptOptimizer()
+# ==================== 模块级便捷函数 ====================
+
+_default_optimizer: Optional[FeedbackOptimizer] = None
 
 
-def get_optimizer() -> PromptOptimizer:
-    """获取优化器实例"""
-    return _optimizer
+def get_feedback_optimizer() -> FeedbackOptimizer:
+    """获取反馈优化器实例"""
+    global _default_optimizer
+    if _default_optimizer is None:
+        _default_optimizer = FeedbackOptimizer()
+    return _default_optimizer
 
 
 def record_feedback(
     conversation_id: str,
-    message_id: str,
-    user_query: str,
-    assistant_response: str,
-    feedback_type: str,
-    feedback_value: Any,
-    correction_text: Optional[str] = None,
-    retrieved_sources: List[str] = None
+    feedback_type: FeedbackType,
+    query: str,
+    response: str,
+    **kwargs,
 ) -> FeedbackRecord:
-    """记录反馈"""
-    import uuid
-    
-    feedback = FeedbackRecord(
-        id=str(uuid.uuid4()),
-        conversation_id=conversation_id,
-        message_id=message_id,
-        user_query=user_query,
-        assistant_response=assistant_response,
-        feedback_type=FeedbackType(feedback_type),
-        feedback_value=feedback_value,
-        correction_text=correction_text,
-        retrieved_sources=retrieved_sources or [],
+    """便捷函数：记录反馈"""
+    return get_feedback_optimizer().record_feedback(
+        conversation_id, feedback_type, query, response, **kwargs
     )
-    
-    _optimizer.add_feedback(feedback)
-    return feedback
 
+
+def detect_and_record_natural_feedback(
+    text: str,
+    conversation_id: str,
+    query: str,
+    response: str,
+    intent_type: str = None,
+    scenario_id: str = None,
+) -> Optional[FeedbackRecord]:
+    """便捷函数：检测并记录自然语言反馈"""
+    optimizer = get_feedback_optimizer()
+    
+    detection = optimizer.detect_natural_feedback(text)
+    if detection:
+        feedback_type, confidence = detection
+        
+        if confidence >= 0.4:
+            return optimizer.record_feedback(
+                conversation_id=conversation_id,
+                feedback_type=feedback_type,
+                query=query,
+                response=response,
+                intent_type=intent_type,
+                scenario_id=scenario_id,
+            )
+    
+    return None

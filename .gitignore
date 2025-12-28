@@ -49,8 +49,7 @@ env/
 .DS_Store
 Thumbs.db
 
-# Data directories (created at runtime)
-data/
+# Log directories (created at runtime)
 logs/
 
 # Secrets

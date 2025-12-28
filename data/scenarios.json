@@ -1,0 +1,120 @@
+{
+  "version": "1.0",
+  "description": "工业制造测试数据集 - 场景元数据",
+  "scenarios": [
+    {
+      "id": "aoi_inspection",
+      "name": "AOI 检测",
+      "industry": "电子制造",
+      "description": "自动光学检测，用于 PCB、SMT 等电子产品质量检测",
+      "products": [
+        {
+          "id": "AOI8000",
+          "name": "AOI8000 高精度检测系统",
+          "category": "高端产线",
+          "key_params": ["检测精度", "功率", "产能", "视野范围"]
+        },
+        {
+          "id": "AOI5000",
+          "name": "AOI5000 标准检测系统",
+          "category": "标准产线",
+          "key_params": ["检测精度", "功率", "产能"]
+        }
+      ],
+      "test_focus": ["参数查询", "规格对比", "产品选型"]
+    },
+    {
+      "id": "smart_warehouse",
+      "name": "智能仓储",
+      "industry": "物流仓储",
+      "description": "自动化仓储管理系统，包含 WMS 和 AGV 解决方案",
+      "products": [
+        {
+          "id": "WMS-Pro",
+          "name": "WMS-Pro 仓储管理系统",
+          "category": "软件系统",
+          "key_params": ["并发用户数", "SKU容量", "订单处理量"]
+        },
+        {
+          "id": "AGV-100",
+          "name": "AGV-100 智能搬运机器人",
+          "category": "硬件设备",
+          "key_params": ["载重", "续航", "速度", "定位精度"]
+        }
+      ],
+      "test_focus": ["案例检索", "计算选型", "ROI 计算"]
+    },
+    {
+      "id": "industrial_robot",
+      "name": "工业机器人",
+      "industry": "自动化制造",
+      "description": "工业机械臂及自动化生产线解决方案",
+      "products": [
+        {
+          "id": "RB-600",
+          "name": "RB-600 六轴协作机器人",
+          "category": "协作机器人",
+          "key_params": ["负载", "臂展", "重复定位精度", "功率"]
+        },
+        {
+          "id": "RB-1200",
+          "name": "RB-1200 重载工业机器人",
+          "category": "工业机器人",
+          "key_params": ["负载", "臂展", "重复定位精度", "功率", "防护等级"]
+        }
+      ],
+      "test_focus": ["报价查询", "方案生成", "配置计算"]
+    },
+    {
+      "id": "predictive_maintenance",
+      "name": "预测性维护",
+      "industry": "设备管理",
+      "description": "基于 AI 的设备健康监测和故障预测系统",
+      "products": [
+        {
+          "id": "PDM-Cloud",
+          "name": "PDM-Cloud 预测性维护平台",
+          "category": "云平台",
+          "key_params": ["设备接入数", "预测准确率", "数据存储周期"]
+        },
+        {
+          "id": "SensorKit",
+          "name": "SensorKit 智能传感器套件",
+          "category": "传感器",
+          "key_params": ["采样频率", "精度", "通信协议", "供电方式"]
+        }
+      ],
+      "test_focus": ["技术问答", "故障排查", "方案对比"]
+    },
+    {
+      "id": "quality_control",
+      "name": "质量控制",
+      "industry": "生产管理",
+      "description": "生产过程质量管理和 MES 系统",
+      "products": [
+        {
+          "id": "QC-Vision",
+          "name": "QC-Vision 视觉质检系统",
+          "category": "质检设备",
+          "key_params": ["检测速度", "缺陷识别率", "误报率"]
+        },
+        {
+          "id": "MES-Lite",
+          "name": "MES-Lite 轻量级制造执行系统",
+          "category": "软件系统",
+          "key_params": ["工位数", "并发用户", "报表类型"]
+        }
+      ],
+      "test_focus": ["多产品关联", "行业筛选", "跨场景检索"]
+    }
+  ],
+  "material_types": {
+    "core": "产品核心信息（规格书、参数表）",
+    "whitepaper": "白皮书/技术文档",
+    "case": "客户案例/成功故事",
+    "quote": "报价单/价格信息",
+    "solution": "解决方案/方案书",
+    "faq": "常见问题"
+  }
+}
+

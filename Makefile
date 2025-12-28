@@ -234,6 +234,34 @@ n8n-export:
 verify:
 	bash scripts/verify_rag.sh
 
+# ==================== 测试数据 ====================
+
+# 上传测试数据到 MinIO
+upload-test-data:
+	@echo "=== 上传测试数据到 MinIO ==="
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work \
+		-e MINIO_ENDPOINT=minio:9000 \
+		-e MINIO_ACCESS_KEY=$(MINIO_ROOT_USER) \
+		-e MINIO_SECRET_KEY=$(MINIO_ROOT_PASSWORD) \
+		-e MINIO_BUCKET=uploads \
+		api python scripts/upload_test_data.py
+
+# 上传指定场景的测试数据
+upload-test-data-aoi:
+	@echo "=== 上传 AOI 检测场景测试数据 ==="
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work \
+		-e MINIO_ENDPOINT=minio:9000 \
+		-e MINIO_ACCESS_KEY=$(MINIO_ROOT_USER) \
+		-e MINIO_SECRET_KEY=$(MINIO_ROOT_PASSWORD) \
+		-e MINIO_BUCKET=uploads \
+		api python scripts/upload_test_data.py --scenario aoi_inspection
+
+# 预览测试数据（不上传）
+upload-test-data-dry:
+	@echo "=== 预览测试数据（不实际上传）==="
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work \
+		api python scripts/upload_test_data.py --dry-run
+
 # 运行完整 Pipeline V2 (从上传到索引，含参数提取)
 pipeline:
 	@echo "=== 运行 Pipeline V2: ingest -> extract -> params -> expand -> index ==="
@@ -692,6 +720,11 @@ help:
 	@echo "    make reload-dags      - 重新加载DAG代码"
 	@echo "    make trigger-dedup    - 触发重复检测"
 	@echo "    make ku-relations     - 查看KU关系统计"
+	@echo ""
+	@echo "  测试数据:"
+	@echo "    make upload-test-data     - 上传所有测试数据"
+	@echo "    make upload-test-data-aoi - 上传 AOI 场景测试数据"
+	@echo "    make upload-test-data-dry - 预览测试数据（不上传）"
 	@echo ""
 	@echo "  验证:"
 	@echo "    make verify    - 验证 RAG 流程"

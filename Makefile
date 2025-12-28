@@ -621,7 +621,7 @@ trigger-dedup:
 # 查看 KU 关系
 ku-relations:
 	@echo "=== KU 关系统计 ==="
-	@$(COMPOSE) exec -T api python -c "from app.db import get_db; from app.models import KnowledgeUnit, KURelation; from sqlalchemy import func; db = next(get_db()); print(f'Total KUs: {db.query(KnowledgeUnit).count()}'); print(f'Total relations: {db.query(KURelation).count()}'); types = db.query(KnowledgeUnit.ku_type, func.count(KnowledgeUnit.id)).group_by(KnowledgeUnit.ku_type).all(); print('By type:', dict(types))"
+	@$(COMPOSE) exec -T api python -c "from app.db import SessionLocal; from app.models import KnowledgeUnit, KURelation; from sqlalchemy import func; db = SessionLocal(); print(f'Total KUs: {db.query(KnowledgeUnit).count()}'); print(f'Total relations: {db.query(KURelation).count()}'); types = db.query(KnowledgeUnit.ku_type, func.count(KnowledgeUnit.id)).group_by(KnowledgeUnit.ku_type).all(); print('By type:', dict(types)); db.close()"
 
 # 验证 Phase 2 升级
 verify-phase2:

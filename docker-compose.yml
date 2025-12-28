@@ -15,6 +15,10 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      # Webhook 通知配置 - 文件上传自动触发 n8n
+      MINIO_NOTIFY_WEBHOOK_ENABLE_N8N: "on"
+      MINIO_NOTIFY_WEBHOOK_ENDPOINT_N8N: "http://n8n:5678/webhook/file-uploaded"
+      MINIO_NOTIFY_WEBHOOK_QUEUE_LIMIT_N8N: "10000"
     volumes: [ "minio:/data" ]
     ports: ["9000:9000","9001:9001"]
 

@@ -139,7 +139,7 @@ class KURelation(Base):
     source_ku_id = Column(String(50), nullable=False)  # 源 KU ID
     target_ku_id = Column(String(50), nullable=False)  # 目标 KU ID
     relation_type = Column(String(30), nullable=False)  # parent_of, related_to, merged_from, supersedes
-    metadata = Column(JSONB, default={})
+    relation_metadata = Column(JSONB, default={})  # Renamed from 'metadata' (reserved in SQLAlchemy)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -152,7 +152,7 @@ class Product(Base):
     category = Column(String(100))  # 产品分类
     description = Column(Text)  # 产品描述
     primary_ku_id = Column(Integer, nullable=True)  # 主 KU ID
-    metadata = Column(JSONB, default={})
+    extra_data = Column(JSONB, default={})  # Renamed from 'metadata' (reserved in SQLAlchemy)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -36,7 +36,7 @@ def upgrade():
         sa.Column('source_ku_id', sa.String(50), nullable=False),
         sa.Column('target_ku_id', sa.String(50), nullable=False),
         sa.Column('relation_type', sa.String(30), nullable=False),  # parent_of, related_to, merged_from, supersedes
-        sa.Column('metadata', JSONB, server_default='{}'),
+        sa.Column('relation_metadata', JSONB, server_default='{}'),
         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
     )
     op.create_index('idx_ku_relations_source', 'ku_relations', ['source_ku_id'])
@@ -52,7 +52,7 @@ def upgrade():
         sa.Column('category', sa.String(100)),
         sa.Column('description', sa.Text()),
         sa.Column('primary_ku_id', sa.Integer(), nullable=True),
-        sa.Column('metadata', JSONB, server_default='{}'),
+        sa.Column('extra_data', JSONB, server_default='{}'),
         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
     )

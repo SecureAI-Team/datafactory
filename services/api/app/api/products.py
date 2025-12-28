@@ -172,7 +172,7 @@ async def get_product(
             "description": product.description,
             "primary_ku_id": product.primary_ku_id,
             "ku_count": ku_count,
-            "metadata": product.metadata if hasattr(product, 'metadata') else {},
+            "extra_data": product.extra_data if hasattr(product, 'extra_data') else {},
         }
         
     except HTTPException:
@@ -328,7 +328,7 @@ async def get_product_relations(
                     "source_ku_id": r.source_ku_id,
                     "target_ku_id": r.target_ku_id,
                     "relation_type": r.relation_type,
-                    "metadata": r.metadata if r.metadata else {},
+                    "relation_metadata": r.relation_metadata if r.relation_metadata else {},
                 }
                 for r in relations
             ],

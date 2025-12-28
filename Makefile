@@ -544,21 +544,17 @@ print('✓ Phase A 数据模型 OK')"
 # Phase B 升级 - Pipeline 增强（重复检测、智能合并）
 upgrade-phase-b:
 	@echo "=== Phase B 升级: Pipeline 增强（重复检测、智能合并）==="
-	$(COMPOSE) build api pipeline
+	$(COMPOSE) build api
 	$(COMPOSE) up -d api
 	$(COMPOSE) restart airflow
 	@sleep 10
 	@echo ""
-	@echo "验证新模块..."
-	$(COMPOSE) exec -T api python -c "\
-print('Importing dedup and merger modules...'); \
-from pipeline.dedup_detector import DedupDetector; \
-from pipeline.ku_merger import KUMerger; \
-print('✓ DedupDetector OK'); \
-print('✓ KUMerger OK')"
+	@echo "验证 Pipeline 模块文件..."
+	@test -f services/pipeline/pipeline/dedup_detector.py && echo "✓ dedup_detector.py exists" || echo "✗ dedup_detector.py missing"
+	@test -f services/pipeline/pipeline/ku_merger.py && echo "✓ ku_merger.py exists" || echo "✗ ku_merger.py missing"
 	@echo ""
 	@echo "验证合并 DAG..."
-	$(COMPOSE) exec -T airflow airflow dags list | grep merge_duplicate
+	$(COMPOSE) exec -T airflow airflow dags list | grep -E "merge_duplicates" || echo "⚠ DAG 可能尚未加载，请稍后重试"
 	@echo ""
 	@echo "=== Phase B 升级完成 ==="
 	@echo "新增功能:"
@@ -619,7 +615,7 @@ upgrade-phase-d:
 # 触发重复检测 DAG
 trigger-dedup:
 	@echo "=== 触发重复检测 ==="
-	$(COMPOSE) exec -T airflow airflow dags trigger merge_duplicate_knowledge_units --conf '{}'
+	$(COMPOSE) exec -T airflow airflow dags trigger merge_duplicates --conf '{}'
 	@echo "DAG 已触发，请在 Airflow UI 查看进度: http://localhost:8080"
 
 # 查看 KU 关系

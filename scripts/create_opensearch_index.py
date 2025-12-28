@@ -92,6 +92,35 @@ def get_index_mapping():
                     "type": "float"
                 },
                 
+                # Phase 6: 多资料处理字段
+                "ku_type": {
+                    "type": "keyword"  # core/case/quote/solution/whitepaper/faq
+                },
+                "product_id": {
+                    "type": "keyword"
+                },
+                "parent_ku_id": {
+                    "type": "keyword"
+                },
+                "is_primary": {
+                    "type": "boolean"
+                },
+                "version": {
+                    "type": "integer"
+                },
+                "related_ku_ids": {
+                    "type": "keyword"  # 关联的 KU IDs
+                },
+                "merge_source_ids": {
+                    "type": "keyword"  # 合并来源 KU IDs
+                },
+                "industry_tags": {
+                    "type": "keyword"  # 行业标签
+                },
+                "use_case_tags": {
+                    "type": "keyword"  # 使用场景标签
+                },
+                
                 # 结构化参数（nested类型支持精确查询）
                 "params": {
                     "type": "nested",

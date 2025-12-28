@@ -12,7 +12,14 @@ from openai import OpenAI
 from fastapi import APIRouter, Header, BackgroundTasks
 from fastapi.responses import StreamingResponse, JSONResponse
 
-from ..services.retrieval import search, get_index_stats
+from ..services.retrieval import (
+    search,
+    get_index_stats,
+    search_with_relations,
+    search_cases,
+    search_quotes,
+)
+from ..services.response_builder import build_response, ResponseBuilder
 from ..services.scenarios import get_prompt
 from ..services.intent_recognizer import (
     recognize_intent,
@@ -228,6 +235,7 @@ def get_intent_label(intent_type: IntentType) -> str:
         IntentType.PARAMETER_QUERY: "📊 参数查询",
         IntentType.CALCULATION: "🔢 计算选型",
         IntentType.CASE_STUDY: "📁 案例参考",
+        IntentType.QUOTE: "💰 报价咨询",  # Phase 6 新增
         IntentType.GENERAL: "💬 通用问答",
     }
     return labels.get(intent_type, "💬 通用问答")
@@ -358,6 +366,20 @@ def build_system_prompt(
 2. 使用表格形式呈现差异
 3. 总结各选项的适用场景
 4. 根据用户情况给出建议""",
+        
+        IntentType.CASE_STUDY: """
+请帮助用户查找相关案例：
+1. 列出匹配的案例，包含行业和规模
+2. 突出每个案例的亮点和关键成果
+3. 说明案例的适用场景
+4. 如需更多详情可以询问具体案例""",
+        
+        IntentType.QUOTE: """
+请回答报价相关问题：
+1. 如有具体价格信息，清晰列出
+2. 说明价格的组成和影响因素
+3. 提醒价格可能有时效性
+4. 建议联系销售获取最新报价""",
     }
     
     intent_instruction = intent_instructions.get(intent_result.intent_type, "")
@@ -534,13 +556,35 @@ async def gateway(
     # 从上下文中补充参数
     context_params = {k: v.value for k, v in context.entities.items()}
     
-    # 执行检索
-    hits = search(
-        query,
-        intent_result=intent_result,
-        entities=entities,
-        top_k=5,
-    )
+    # Phase 6: 根据意图选择检索策略
+    related_kus = {}
+    
+    if intent_result.intent_type == IntentType.CASE_STUDY:
+        # 案例查找：使用专用案例检索
+        industry = entities.get("industry")
+        hits = search_cases(
+            query=query,
+            industry=industry,
+            top_k=5,
+        )
+    elif intent_result.intent_type == IntentType.QUOTE:
+        # 报价查询：使用专用报价检索
+        product_id = entities.get("product")
+        hits = search_quotes(product_id=product_id, query=query, top_k=5)
+        
+        # 补充产品核心信息
+        if not hits:
+            hits = search(query, intent_result=intent_result, entities=entities, top_k=3)
+    else:
+        # 通用检索：使用关联检索
+        search_result = search_with_relations(
+            query=query,
+            intent_result=intent_result,
+            include_related=True,
+            top_k=5,
+        )
+        hits = search_result.get("hits", [])
+        related_kus = search_result.get("related", {})
     
     # ========== Step 5.5: 计算引擎 ==========
     calculation_result = None
@@ -590,7 +634,42 @@ async def gateway(
         )
     
     # ========== Step 6: 构建 Prompt ==========
-    context_prompt = build_context_prompt(hits, intent_result, solutions_info)
+    # Phase 6: 使用增强的回答构建器
+    if intent_result.intent_type in (IntentType.CASE_STUDY, IntentType.QUOTE):
+        # 案例和报价使用专用构建器
+        built_response = build_response(
+            query=query,
+            intent=intent_result,
+            hits=hits,
+            related_kus=related_kus,
+            calculation_result=calculation_result.__dict__ if calculation_result else None,
+        )
+        context_prompt = built_response.context_for_llm
+        
+        # 添加格式化的来源和推荐
+        response_builder = ResponseBuilder()
+        sources_footer = response_builder.format_sources(built_response.sources)
+        recommendations_footer = response_builder.format_recommendations(built_response.recommendations)
+    else:
+        # 原有逻辑
+        context_prompt = build_context_prompt(hits, intent_result, solutions_info)
+        sources_footer = ""
+        recommendations_footer = ""
+        
+        # 添加关联 KU 信息
+        if related_kus:
+            related_parts = []
+            for ku_id, related_list in related_kus.items():
+                for rel in related_list[:2]:
+                    rel_type = rel.get("ku_type", "")
+                    rel_title = rel.get("title", "")
+                    if rel_type == "case":
+                        related_parts.append(f"【相关案例: {rel_title}】{rel.get('summary', '')[:200]}")
+                    elif rel_type == "quote":
+                        related_parts.append(f"【报价信息: {rel_title}】{rel.get('summary', '')[:200]}")
+            
+            if related_parts:
+                context_prompt += "\n\n" + "\n".join(related_parts)
     
     # 添加计算结果到上下文
     if calculation_result and calculation_result.success:

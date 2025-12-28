@@ -1,6 +1,28 @@
-﻿from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, ForeignKey, Boolean
+﻿from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, ForeignKey, Boolean, Float
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 from .db import Base
+
+
+# ==================== KU 类型常量 ====================
+class KUType:
+    CORE = "core"           # 核心产品信息（参数、功能、规格）
+    CASE = "case"           # 客户案例/成功故事
+    QUOTE = "quote"         # 报价单/价格信息
+    SOLUTION = "solution"   # 解决方案/方案书
+    WHITEPAPER = "whitepaper"  # 白皮书/技术文档
+    FAQ = "faq"             # 常见问题
+    
+    ALL = [CORE, CASE, QUOTE, SOLUTION, WHITEPAPER, FAQ]
+    MERGEABLE = [CORE, WHITEPAPER, FAQ]  # 可合并的类型
+
+
+class RelationType:
+    PARENT_OF = "parent_of"     # 主KU -> 附属KU
+    RELATED_TO = "related_to"   # 相关联
+    MERGED_FROM = "merged_from" # 合并来源
+    SUPERSEDES = "supersedes"   # 替代（新版本）
+
 
 class SourceDocument(Base):
     __tablename__ = "source_documents"
@@ -39,6 +61,15 @@ class KnowledgeUnit(Base):
     created_by = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    # Phase 6 新增字段 - 多资料处理
+    ku_type = Column(String(20), default="core")  # core/case/quote/solution/whitepaper/faq
+    parent_ku_id = Column(String(50), nullable=True)  # 关联到主KU
+    product_id = Column(String(100), nullable=True)  # 产品标识
+    is_primary = Column(Boolean, default=False)  # 是否为该产品的主KU
+    merge_source_ids = Column(JSONB, default=[])  # 合并来源 KU IDs
+    industry_tags = Column(JSONB, default=[])  # 行业标签
+    use_case_tags = Column(JSONB, default=[])  # 使用场景标签
 
 class KUReview(Base):
     __tablename__ = "ku_reviews"
@@ -97,3 +128,44 @@ class PipelineRun(Base):
     started_at = Column(DateTime(timezone=True))
     ended_at = Column(DateTime(timezone=True))
     error = Column(Text)
+
+
+# ==================== Phase 6 新增模型 ====================
+
+class KURelation(Base):
+    """KU 关联关系表"""
+    __tablename__ = "ku_relations"
+    id = Column(Integer, primary_key=True)
+    source_ku_id = Column(String(50), nullable=False)  # 源 KU ID
+    target_ku_id = Column(String(50), nullable=False)  # 目标 KU ID
+    relation_type = Column(String(30), nullable=False)  # parent_of, related_to, merged_from, supersedes
+    metadata = Column(JSONB, default={})
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Product(Base):
+    """产品维度管理表"""
+    __tablename__ = "products"
+    id = Column(Integer, primary_key=True)
+    product_id = Column(String(100), unique=True, nullable=False)  # 产品唯一标识
+    name = Column(String(200), nullable=False)  # 产品名称
+    category = Column(String(100))  # 产品分类
+    description = Column(Text)  # 产品描述
+    primary_ku_id = Column(Integer, nullable=True)  # 主 KU ID
+    metadata = Column(JSONB, default={})
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class DedupGroup(Base):
+    """重复检测结果组"""
+    __tablename__ = "dedup_groups"
+    id = Column(Integer, primary_key=True)
+    group_id = Column(String(50), unique=True, nullable=False)
+    ku_ids = Column(JSONB, nullable=False)  # 该组包含的 KU IDs
+    similarity_score = Column(Float)  # 相似度分数
+    status = Column(String(20), default="pending")  # pending, merged, dismissed
+    merge_result_ku_id = Column(Integer, nullable=True)  # 合并后的 KU ID
+    reviewed_by = Column(String(100))
+    reviewed_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

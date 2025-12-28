@@ -7,6 +7,9 @@ from .api import vision
 from .api import kg
 from .api import recommend
 from .api import summary
+from .api import dedup
+from .api import products
+from .api import bd
 
 app = FastAPI(
     title="AI Data Factory API",
@@ -48,6 +51,16 @@ app.include_router(recommend.router, prefix="/api", tags=["recommendation"])
 # 对话摘要 API
 app.include_router(summary.router, prefix="/v1", tags=["summary"])
 app.include_router(summary.router, prefix="/api", tags=["summary"])
+
+# Phase 6: 多资料处理 API
+app.include_router(dedup.router, tags=["dedup"])
+app.include_router(dedup.router, prefix="/api", tags=["dedup"])
+
+app.include_router(products.router, tags=["products"])
+app.include_router(products.router, prefix="/api", tags=["products"])
+
+app.include_router(bd.router, tags=["bd-sales"])
+app.include_router(bd.router, prefix="/api", tags=["bd-sales"])
 
 @app.get("/health")
 def health():

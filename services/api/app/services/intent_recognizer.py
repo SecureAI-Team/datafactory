@@ -22,9 +22,10 @@ class IntentType(str, Enum):
     BEST_PRACTICE = "best_practice"                      # 最佳实践
     CONCEPT_EXPLAIN = "concept_explain"                  # 概念解释
     HOW_TO = "how_to"                                    # 操作指南
-    PARAMETER_QUERY = "parameter_query"                  # 参数查询（新增）
-    CALCULATION = "calculation"                          # 计算/选型（新增）
-    CASE_STUDY = "case_study"                            # 案例查询（新增）
+    PARAMETER_QUERY = "parameter_query"                  # 参数查询
+    CALCULATION = "calculation"                          # 计算/选型
+    CASE_STUDY = "case_study"                            # 案例查询
+    QUOTE = "quote"                                      # 报价咨询（Phase 6 新增）
     GENERAL = "general"                                  # 通用
 
 
@@ -145,8 +146,22 @@ INTENT_PATTERNS = {
             r"(.+)(案例|实例)",
             r"有.*客户",
             r"项目经验",
+            r"给我.*案例",
+            r"找.*案例",
         ],
-        "priority": 3,
+        "priority": 7,  # 提高优先级
+    },
+    IntentType.QUOTE: {
+        "keywords": ["价格", "报价", "多少钱", "费用", "成本", "预算", "花费", "投资"],
+        "patterns": [
+            r"(多少钱|什么价格)",
+            r"价格(是|多少)",
+            r"报价",
+            r"费用(是|多少)",
+            r"成本(是|多少)",
+            r"预算.*多少",
+        ],
+        "priority": 8,  # 高优先级
     },
 }
 
@@ -502,6 +517,7 @@ class IntentRecognizer:
             IntentType.PARAMETER_QUERY: "查询具体参数或规格",
             IntentType.CALCULATION: "需要计算或选型",
             IntentType.CASE_STUDY: "寻找案例或实例",
+            IntentType.QUOTE: "咨询价格或报价",
             IntentType.GENERAL: "一般性问题",
         }
         return descriptions.get(intent_type, "")

@@ -92,6 +92,23 @@ setup-budibase-run:
 		-e API_INTERNAL_URL=http://api:8000 \
 		api python scripts/setup_budibase_app.py
 
+# 设置多资料处理 Budibase 应用
+setup-budibase-multi-material:
+	@if [ -z "$(BUDIBASE_API_KEY)" ]; then \
+		echo "错误: 请设置 BUDIBASE_API_KEY"; \
+		echo "用法: make setup-budibase-multi-material BUDIBASE_API_KEY=your_key"; \
+		exit 1; \
+	fi
+	@echo "=== 设置多资料处理 Budibase 应用 ==="
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work \
+		-e BUDIBASE_URL=http://budibase:80 \
+		-e BUDIBASE_API_KEY=$(BUDIBASE_API_KEY) \
+		-e API_INTERNAL_URL=http://api:8000 \
+		-e TEMPLATE_FILE=infra/budibase/multi_material_app.json \
+		api python scripts/setup_budibase_app.py
+	@echo "=== 多资料处理应用设置完成 ==="
+	@echo "访问 http://<IP>:10000 查看应用"
+
 # ==================== n8n 设置 ====================
 
 # 创建 n8n 工作流（显示说明）
@@ -493,6 +510,132 @@ print('✓ SummaryService OK')"
 	@echo "  Neo4j Browser: http://localhost:7474"
 	@echo ""
 
+# Phase A 升级 - 数据模型增强（多资料处理）
+upgrade-phase-a:
+	@echo "=== Phase A 升级: 数据模型增强（多资料处理）==="
+	$(COMPOSE) run --rm api alembic upgrade head
+	@echo ""
+	@echo "更新 OpenSearch 索引..."
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work \
+		-e OPENSEARCH_URL=http://opensearch:9200 \
+		-e OPENSEARCH_INDEX=knowledge_units \
+		api python scripts/create_opensearch_index.py --force
+	@echo ""
+	$(COMPOSE) build api
+	$(COMPOSE) up -d api
+	@sleep 5
+	@echo ""
+	@echo "验证数据模型..."
+	$(COMPOSE) exec -T api python -c "\
+from app.models import KnowledgeUnit, KURelation; \
+from app.db import Base; \
+print(f'KnowledgeUnit fields: ku_type, parent_ku_id, product_id, is_primary, merge_source_ids, version'); \
+print(f'KURelation table ready'); \
+print('✓ Phase A 数据模型 OK')"
+	@echo ""
+	@echo "=== Phase A 升级完成 ==="
+	@echo "新增功能:"
+	@echo "  - KU 类型字段 (core/case/quote/solution/whitepaper/faq)"
+	@echo "  - 产品关联字段 (product_id, parent_ku_id)"
+	@echo "  - 合并追溯 (merge_source_ids)"
+	@echo "  - KU 关系表 (ku_relations)"
+	@echo ""
+
+# Phase B 升级 - Pipeline 增强（重复检测、智能合并）
+upgrade-phase-b:
+	@echo "=== Phase B 升级: Pipeline 增强（重复检测、智能合并）==="
+	$(COMPOSE) build api pipeline
+	$(COMPOSE) up -d api
+	$(COMPOSE) restart airflow
+	@sleep 10
+	@echo ""
+	@echo "验证新模块..."
+	$(COMPOSE) exec -T api python -c "\
+print('Importing dedup and merger modules...'); \
+from pipeline.dedup_detector import DedupDetector; \
+from pipeline.ku_merger import KUMerger; \
+print('✓ DedupDetector OK'); \
+print('✓ KUMerger OK')"
+	@echo ""
+	@echo "验证合并 DAG..."
+	$(COMPOSE) exec -T airflow airflow dags list | grep merge_duplicate
+	@echo ""
+	@echo "=== Phase B 升级完成 ==="
+	@echo "新增功能:"
+	@echo "  - 材料分类增强（识别 ku_type 和 product_id）"
+	@echo "  - 重复检测模块（语义相似度 + 参数匹配）"
+	@echo "  - 智能合并模块（标题/摘要/参数合并策略）"
+	@echo "  - 合并审核 DAG (merge_duplicate_knowledge_units)"
+	@echo ""
+	@echo "触发合并检测:"
+	@echo "  make trigger-dedup"
+	@echo ""
+
+# Phase C 升级 - 检索增强（关联 KU 检索、聚合回答）
+upgrade-phase-c:
+	@echo "=== Phase C 升级: 检索增强（关联 KU 检索、聚合回答）==="
+	$(COMPOSE) build api
+	$(COMPOSE) up -d api
+	@sleep 5
+	@echo ""
+	@echo "验证新模块..."
+	$(COMPOSE) exec -T api python -c "\
+from app.services.retrieval import search_with_relations; \
+from app.services.response_builder import ResponseBuilder; \
+print('✓ search_with_relations OK'); \
+print('✓ ResponseBuilder OK')"
+	@echo ""
+	@echo "=== Phase C 升级完成 ==="
+	@echo "新增功能:"
+	@echo "  - 关联 KU 检索（主 KU + 关联案例/报价/方案）"
+	@echo "  - 聚合回答生成（综合多 KU 内容）"
+	@echo "  - 意图感知检索（案例/报价/方案优先）"
+	@echo ""
+
+# Phase D 升级 - UI/UX 增强
+upgrade-phase-d:
+	@echo "=== Phase D 升级: UI/UX 增强 ==="
+	@echo ""
+	@echo "数据工程师入口 (Budibase):"
+	@echo "  1. 访问 http://<IP>:10000"
+	@echo "  2. 导入应用模板: infra/budibase/multi-material-app.json"
+	@echo "  3. 功能包括:"
+	@echo "     - 批量上传与分类预览"
+	@echo "     - KU 质量审核工作台"
+	@echo "     - 重复检测与合并工作台"
+	@echo "     - Pipeline 状态仪表盘"
+	@echo ""
+	@echo "BD/Sales 入口 (Open WebUI):"
+	@echo "  1. 访问 http://<IP>:3001"
+	@echo "  2. 功能包括:"
+	@echo "     - 智能意图识别（案例/报价/方案）"
+	@echo "     - 快捷命令 (/案例 /报价 /方案)"
+	@echo "     - 关联内容推荐"
+	@echo ""
+	@echo "运行 setup 脚本配置 Budibase 应用:"
+	@echo "  make setup-budibase-multi-material BUDIBASE_API_KEY=your_key"
+	@echo ""
+
+# 触发重复检测 DAG
+trigger-dedup:
+	@echo "=== 触发重复检测 ==="
+	$(COMPOSE) exec -T airflow airflow dags trigger merge_duplicate_knowledge_units --conf '{}'
+	@echo "DAG 已触发，请在 Airflow UI 查看进度: http://localhost:8080"
+
+# 查看 KU 关系
+ku-relations:
+	@echo "=== KU 关系统计 ==="
+	$(COMPOSE) exec -T api python -c "\
+from app.db import get_db; \
+from app.models import KnowledgeUnit, KURelation; \
+from sqlalchemy import func; \
+db = next(get_db()); \
+print(f'Total KUs: {db.query(KnowledgeUnit).count()}'); \
+print(f'By type:'); \
+for ku_type, count in db.query(KnowledgeUnit.ku_type, func.count()).group_by(KnowledgeUnit.ku_type).all(): \
+    print(f'  {ku_type}: {count}'); \
+print(f'Total relations: {db.query(KURelation).count()}')"
+
 # 验证 Phase 2 升级
 verify-phase2:
 	python scripts/upgrade_phase2.py --verify-only
@@ -554,8 +697,14 @@ help:
 	@echo "    make upgrade-phase3   - 升级到Phase3（结构化参数）"
 	@echo "    make upgrade-phase4   - 升级到Phase4（优化闭环）"
 	@echo "    make upgrade-phase5   - 升级到Phase5（智能能力扩展）"
+	@echo "    make upgrade-phase-a  - 升级到PhaseA（数据模型增强）"
+	@echo "    make upgrade-phase-b  - 升级到PhaseB（Pipeline增强）"
+	@echo "    make upgrade-phase-c  - 升级到PhaseC（检索增强）"
+	@echo "    make upgrade-phase-d  - 升级到PhaseD（UI/UX增强）"
 	@echo "    make index-recreate   - 仅重建索引结构"
 	@echo "    make reload-dags      - 重新加载DAG代码"
+	@echo "    make trigger-dedup    - 触发重复检测"
+	@echo "    make ku-relations     - 查看KU关系统计"
 	@echo ""
 	@echo "  验证:"
 	@echo "    make verify    - 验证 RAG 流程"

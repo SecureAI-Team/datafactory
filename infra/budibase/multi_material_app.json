@@ -1,0 +1,767 @@
+{
+  "name": "AI Data Factory - 数据工程师控制台",
+  "description": "多资料处理、重复检测、KU审核、产品管理",
+  "version": "2.0.0",
+  "screens": [
+    {
+      "name": "仪表盘",
+      "route": "/dashboard",
+      "components": [
+        {
+          "type": "container",
+          "props": {
+            "direction": "row",
+            "gap": "M"
+          },
+          "children": [
+            {
+              "type": "statcard",
+              "props": {
+                "title": "知识单元数",
+                "value": "{{stats.ku_count}}",
+                "icon": "Book"
+              }
+            },
+            {
+              "type": "statcard",
+              "props": {
+                "title": "待审核 KU",
+                "value": "{{stats.pending_ku_count}}",
+                "icon": "CheckCircle",
+                "color": "{{stats.pending_ku_count > 0 ? 'orange' : 'green'}}"
+              }
+            },
+            {
+              "type": "statcard",
+              "props": {
+                "title": "待处理重复",
+                "value": "{{stats.pending_dedup_count}}",
+                "icon": "Copy",
+                "color": "{{stats.pending_dedup_count > 0 ? 'red' : 'green'}}"
+              }
+            },
+            {
+              "type": "statcard",
+              "props": {
+                "title": "产品数",
+                "value": "{{stats.product_count}}",
+                "icon": "Package"
+              }
+            }
+          ]
+        },
+        {
+          "type": "container",
+          "props": {
+            "title": "KU 类型分布",
+            "direction": "row",
+            "gap": "S"
+          },
+          "children": [
+            {
+              "type": "chart",
+              "props": {
+                "type": "pie",
+                "datasource": "ku_type_distribution",
+                "labelField": "type",
+                "valueField": "count"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "批量上传",
+      "route": "/upload",
+      "components": [
+        {
+          "type": "form",
+          "props": {
+            "title": "批量上传资料"
+          },
+          "children": [
+            {
+              "type": "fileupload",
+              "props": {
+                "label": "选择文件（支持多选）",
+                "accept": ".pdf,.docx,.doc,.txt,.md,.pptx,.xlsx",
+                "multiple": true,
+                "field": "documents"
+              }
+            },
+            {
+              "type": "select",
+              "props": {
+                "label": "产品（可选）",
+                "options": "{{products}}",
+                "field": "product_id",
+                "placeholder": "自动从文件名提取"
+              }
+            },
+            {
+              "type": "select",
+              "props": {
+                "label": "材料类型（可选）",
+                "options": [
+                  {"value": "auto", "label": "自动识别"},
+                  {"value": "core", "label": "产品核心信息"},
+                  {"value": "case", "label": "客户案例"},
+                  {"value": "quote", "label": "报价单"},
+                  {"value": "solution", "label": "解决方案"},
+                  {"value": "whitepaper", "label": "白皮书"},
+                  {"value": "faq", "label": "FAQ"}
+                ],
+                "field": "ku_type",
+                "default": "auto"
+              }
+            },
+            {
+              "type": "button",
+              "props": {
+                "text": "上传并预览分类",
+                "type": "primary",
+                "onClick": "previewUpload"
+              }
+            }
+          ]
+        },
+        {
+          "type": "datatable",
+          "props": {
+            "title": "分类预览",
+            "datasource": "upload_preview",
+            "columns": [
+              {"name": "filename", "label": "文件名"},
+              {"name": "ku_type", "label": "识别类型"},
+              {"name": "product_id", "label": "产品ID"},
+              {"name": "confidence", "label": "置信度"}
+            ],
+            "visible": "{{upload_preview.length > 0}}"
+          }
+        },
+        {
+          "type": "button",
+          "props": {
+            "text": "确认上传",
+            "type": "cta",
+            "onClick": "confirmUpload",
+            "visible": "{{upload_preview.length > 0}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "KU 审核",
+      "route": "/review",
+      "components": [
+        {
+          "type": "tabs",
+          "props": {
+            "tabs": [
+              {"id": "pending", "label": "待审核"},
+              {"id": "approved", "label": "已通过"},
+              {"id": "rejected", "label": "已拒绝"}
+            ]
+          },
+          "children": [
+            {
+              "type": "datatable",
+              "props": {
+                "datasource": "pending_kus",
+                "columns": [
+                  {"name": "id", "label": "ID"},
+                  {"name": "title", "label": "标题"},
+                  {"name": "ku_type", "label": "类型"},
+                  {"name": "product_id", "label": "产品"},
+                  {"name": "summary", "label": "摘要", "truncate": 100},
+                  {"name": "created_at", "label": "创建时间"}
+                ],
+                "onRowClick": "showKUDetail"
+              }
+            }
+          ]
+        },
+        {
+          "type": "modal",
+          "props": {
+            "id": "ku_detail_modal",
+            "title": "KU 详情"
+          },
+          "children": [
+            {
+              "type": "text",
+              "props": {
+                "label": "标题",
+                "value": "{{selected_ku.title}}"
+              }
+            },
+            {
+              "type": "text",
+              "props": {
+                "label": "摘要",
+                "value": "{{selected_ku.summary}}"
+              }
+            },
+            {
+              "type": "text",
+              "props": {
+                "label": "正文",
+                "value": "{{selected_ku.body_markdown}}",
+                "format": "markdown"
+              }
+            },
+            {
+              "type": "container",
+              "props": {
+                "direction": "row",
+                "gap": "M"
+              },
+              "children": [
+                {
+                  "type": "button",
+                  "props": {
+                    "text": "批准",
+                    "type": "primary",
+                    "onClick": "approveKU"
+                  }
+                },
+                {
+                  "type": "button",
+                  "props": {
+                    "text": "拒绝",
+                    "type": "warning",
+                    "onClick": "rejectKU"
+                  }
+                },
+                {
+                  "type": "button",
+                  "props": {
+                    "text": "退回修改",
+                    "type": "secondary",
+                    "onClick": "returnKU"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "重复检测",
+      "route": "/dedup",
+      "components": [
+        {
+          "type": "container",
+          "props": {
+            "direction": "row",
+            "gap": "M",
+            "justify": "space-between"
+          },
+          "children": [
+            {
+              "type": "text",
+              "props": {
+                "value": "待处理重复组: {{dedup_stats.pending}}",
+                "size": "L"
+              }
+            },
+            {
+              "type": "button",
+              "props": {
+                "text": "触发检测",
+                "onClick": "triggerDedupDetection"
+              }
+            }
+          ]
+        },
+        {
+          "type": "datatable",
+          "props": {
+            "title": "疑似重复",
+            "datasource": "pending_dedup_groups",
+            "columns": [
+              {"name": "group_id", "label": "组ID"},
+              {"name": "ku_count", "label": "KU数量"},
+              {"name": "similarity_score", "label": "相似度"},
+              {"name": "created_at", "label": "检测时间"}
+            ],
+            "onRowClick": "showDedupDetail"
+          }
+        },
+        {
+          "type": "modal",
+          "props": {
+            "id": "dedup_detail_modal",
+            "title": "重复详情 - 并排对比",
+            "size": "large"
+          },
+          "children": [
+            {
+              "type": "container",
+              "props": {
+                "direction": "row",
+                "gap": "L"
+              },
+              "children": [
+                {
+                  "type": "container",
+                  "props": {
+                    "title": "KU 1",
+                    "flex": 1
+                  },
+                  "children": [
+                    {
+                      "type": "text",
+                      "props": {"value": "{{dedup_kus[0].title}}", "size": "L"}
+                    },
+                    {
+                      "type": "text",
+                      "props": {"value": "{{dedup_kus[0].summary}}"}
+                    }
+                  ]
+                },
+                {
+                  "type": "container",
+                  "props": {
+                    "title": "KU 2",
+                    "flex": 1
+                  },
+                  "children": [
+                    {
+                      "type": "text",
+                      "props": {"value": "{{dedup_kus[1].title}}", "size": "L"}
+                    },
+                    {
+                      "type": "text",
+                      "props": {"value": "{{dedup_kus[1].summary}}"}
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "container",
+              "props": {
+                "direction": "row",
+                "gap": "M",
+                "justify": "center"
+              },
+              "children": [
+                {
+                  "type": "button",
+                  "props": {
+                    "text": "合并",
+                    "type": "primary",
+                    "onClick": "approveMerge"
+                  }
+                },
+                {
+                  "type": "button",
+                  "props": {
+                    "text": "保留两者",
+                    "type": "secondary",
+                    "onClick": "dismissMerge"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "产品管理",
+      "route": "/products",
+      "components": [
+        {
+          "type": "container",
+          "props": {
+            "direction": "row",
+            "gap": "M",
+            "justify": "space-between"
+          },
+          "children": [
+            {
+              "type": "text",
+              "props": {"value": "产品列表", "size": "XL"}
+            },
+            {
+              "type": "button",
+              "props": {
+                "text": "添加产品",
+                "type": "primary",
+                "onClick": "showAddProduct"
+              }
+            }
+          ]
+        },
+        {
+          "type": "datatable",
+          "props": {
+            "datasource": "products_list",
+            "columns": [
+              {"name": "product_id", "label": "产品ID"},
+              {"name": "name", "label": "名称"},
+              {"name": "category", "label": "分类"},
+              {"name": "ku_count", "label": "KU数量"},
+              {"name": "primary_ku_id", "label": "主KU"}
+            ],
+            "onRowClick": "showProductDetail"
+          }
+        },
+        {
+          "type": "modal",
+          "props": {
+            "id": "product_detail_modal",
+            "title": "产品详情"
+          },
+          "children": [
+            {
+              "type": "text",
+              "props": {"label": "产品ID", "value": "{{selected_product.product_id}}"}
+            },
+            {
+              "type": "text",
+              "props": {"label": "名称", "value": "{{selected_product.name}}"}
+            },
+            {
+              "type": "datatable",
+              "props": {
+                "title": "关联 KU",
+                "datasource": "product_kus",
+                "columns": [
+                  {"name": "id", "label": "ID"},
+                  {"name": "title", "label": "标题"},
+                  {"name": "ku_type", "label": "类型"},
+                  {"name": "is_primary", "label": "主KU"}
+                ]
+              }
+            },
+            {
+              "type": "button",
+              "props": {
+                "text": "设为主KU",
+                "onClick": "setPrimaryKU"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Pipeline 状态",
+      "route": "/pipeline",
+      "components": [
+        {
+          "type": "container",
+          "props": {
+            "direction": "column",
+            "gap": "L"
+          },
+          "children": [
+            {
+              "type": "text",
+              "props": {"value": "Pipeline 运行状态", "size": "XL"}
+            },
+            {
+              "type": "datatable",
+              "props": {
+                "datasource": "pipeline_runs",
+                "columns": [
+                  {"name": "dag_id", "label": "DAG"},
+                  {"name": "run_id", "label": "运行ID"},
+                  {"name": "status", "label": "状态"},
+                  {"name": "started_at", "label": "开始时间"},
+                  {"name": "ended_at", "label": "结束时间"}
+                ]
+              }
+            },
+            {
+              "type": "button",
+              "props": {
+                "text": "打开 Airflow",
+                "onClick": "openAirflow"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "datasources": [
+    {
+      "name": "API",
+      "type": "REST",
+      "config": {
+        "baseUrl": "http://api:8000",
+        "defaultHeaders": {
+          "Content-Type": "application/json"
+        }
+      }
+    }
+  ],
+  "automations": [
+    {
+      "name": "loadDashboardStats",
+      "trigger": "page_load",
+      "steps": [
+        {
+          "type": "http_request",
+          "config": {
+            "method": "GET",
+            "url": "/v1/debug/index-stats"
+          },
+          "output": "stats"
+        },
+        {
+          "type": "http_request",
+          "config": {
+            "method": "GET",
+            "url": "/v1/dedup/stats"
+          },
+          "output": "dedup_stats"
+        }
+      ]
+    },
+    {
+      "name": "previewUpload",
+      "trigger": "button_click",
+      "steps": [
+        {
+          "type": "http_request",
+          "config": {
+            "method": "POST",
+            "url": "/api/ingest/preview",
+            "body": {
+              "files": "{{documents}}",
+              "product_id": "{{product_id}}",
+              "ku_type": "{{ku_type}}"
+            }
+          },
+          "output": "upload_preview"
+        }
+      ]
+    },
+    {
+      "name": "confirmUpload",
+      "trigger": "button_click",
+      "steps": [
+        {
+          "type": "http_request",
+          "config": {
+            "method": "POST",
+            "url": "/api/ingest/batch",
+            "body": {
+              "files": "{{documents}}",
+              "classifications": "{{upload_preview}}"
+            }
+          }
+        },
+        {
+          "type": "notification",
+          "config": {
+            "message": "文件上传成功，Pipeline 已触发"
+          }
+        }
+      ]
+    },
+    {
+      "name": "showKUDetail",
+      "trigger": "row_click",
+      "steps": [
+        {
+          "type": "http_request",
+          "config": {
+            "method": "GET",
+            "url": "/api/ku/{{row.id}}"
+          },
+          "output": "selected_ku"
+        },
+        {
+          "type": "show_modal",
+          "config": {
+            "modalId": "ku_detail_modal"
+          }
+        }
+      ]
+    },
+    {
+      "name": "approveKU",
+      "trigger": "button_click",
+      "steps": [
+        {
+          "type": "http_request",
+          "config": {
+            "method": "POST",
+            "url": "/api/ku/{{selected_ku.id}}/approve",
+            "body": {
+              "reviewer": "{{current_user}}"
+            }
+          }
+        },
+        {
+          "type": "hide_modal",
+          "config": {"modalId": "ku_detail_modal"}
+        },
+        {
+          "type": "refresh_datasource",
+          "config": {"datasource": "pending_kus"}
+        }
+      ]
+    },
+    {
+      "name": "showDedupDetail",
+      "trigger": "row_click",
+      "steps": [
+        {
+          "type": "http_request",
+          "config": {
+            "method": "GET",
+            "url": "/v1/dedup/group/{{row.group_id}}/details"
+          },
+          "output": "dedup_detail"
+        },
+        {
+          "type": "set_state",
+          "config": {
+            "dedup_kus": "{{dedup_detail.kus}}"
+          }
+        },
+        {
+          "type": "show_modal",
+          "config": {"modalId": "dedup_detail_modal"}
+        }
+      ]
+    },
+    {
+      "name": "approveMerge",
+      "trigger": "button_click",
+      "steps": [
+        {
+          "type": "http_request",
+          "config": {
+            "method": "POST",
+            "url": "/v1/dedup/approve",
+            "body": {
+              "group_id": "{{dedup_detail.group_id}}",
+              "reviewer": "{{current_user}}"
+            }
+          }
+        },
+        {
+          "type": "hide_modal",
+          "config": {"modalId": "dedup_detail_modal"}
+        },
+        {
+          "type": "refresh_datasource",
+          "config": {"datasource": "pending_dedup_groups"}
+        }
+      ]
+    },
+    {
+      "name": "dismissMerge",
+      "trigger": "button_click",
+      "steps": [
+        {
+          "type": "http_request",
+          "config": {
+            "method": "POST",
+            "url": "/v1/dedup/dismiss",
+            "body": {
+              "group_id": "{{dedup_detail.group_id}}",
+              "reviewer": "{{current_user}}",
+              "reason": "Not duplicates"
+            }
+          }
+        },
+        {
+          "type": "hide_modal",
+          "config": {"modalId": "dedup_detail_modal"}
+        },
+        {
+          "type": "refresh_datasource",
+          "config": {"datasource": "pending_dedup_groups"}
+        }
+      ]
+    },
+    {
+      "name": "triggerDedupDetection",
+      "trigger": "button_click",
+      "steps": [
+        {
+          "type": "http_request",
+          "config": {
+            "method": "POST",
+            "url": "http://airflow:8080/api/v1/dags/merge_duplicate_knowledge_units/dagRuns",
+            "headers": {
+              "Authorization": "Basic YWlyZmxvdzphaXJmbG93"
+            },
+            "body": {}
+          }
+        },
+        {
+          "type": "notification",
+          "config": {
+            "message": "重复检测已触发"
+          }
+        }
+      ]
+    },
+    {
+      "name": "loadProducts",
+      "trigger": "page_load",
+      "steps": [
+        {
+          "type": "http_request",
+          "config": {
+            "method": "GET",
+            "url": "/v1/products"
+          },
+          "output": "products_list"
+        }
+      ]
+    },
+    {
+      "name": "showProductDetail",
+      "trigger": "row_click",
+      "steps": [
+        {
+          "type": "http_request",
+          "config": {
+            "method": "GET",
+            "url": "/v1/products/{{row.product_id}}"
+          },
+          "output": "selected_product"
+        },
+        {
+          "type": "http_request",
+          "config": {
+            "method": "GET",
+            "url": "/v1/products/{{row.product_id}}/kus"
+          },
+          "output": "product_kus"
+        },
+        {
+          "type": "show_modal",
+          "config": {"modalId": "product_detail_modal"}
+        }
+      ]
+    },
+    {
+      "name": "openAirflow",
+      "trigger": "button_click",
+      "steps": [
+        {
+          "type": "navigate",
+          "config": {
+            "url": "http://localhost:8080",
+            "newTab": true
+          }
+        }
+      ]
+    }
+  ]
+}
+

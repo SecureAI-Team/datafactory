@@ -172,7 +172,7 @@ def _parse_hits(res: Dict) -> List[Dict]:
             "tags": src.get("terms", []),
             "key_points": src.get("key_points", []),
             "source_file": src.get("source_file", ""),
-            # 新增字段
+            # 场景化字段
             "scenario_id": src.get("scenario_id", ""),
             "scenario_tags": src.get("scenario_tags", []),
             "solution_id": src.get("solution_id", ""),
@@ -180,6 +180,14 @@ def _parse_hits(res: Dict) -> List[Dict]:
             "applicability_score": src.get("applicability_score", 0.5),
             "material_type": src.get("material_type", ""),
             "params": src.get("params", []),
+            # Phase 6: 多资料处理字段
+            "ku_type": src.get("ku_type", "core"),
+            "product_id": src.get("product_id", ""),
+            "parent_ku_id": src.get("parent_ku_id", ""),
+            "is_primary": src.get("is_primary", False),
+            "related_ku_ids": src.get("related_ku_ids", []),
+            "industry_tags": src.get("industry_tags", []),
+            "use_case_tags": src.get("use_case_tags", []),
         }
         
         hits.append(parsed)
@@ -967,3 +975,443 @@ def get_entity_knowledge(
     except Exception as e:
         logger.error(f"Get entity knowledge failed: {e}")
         return {"found": False, "error": str(e)}
+
+
+# ==================== Phase 6: 多资料处理增强 ====================
+
+def search_with_relations(
+    query: str,
+    intent_result: Optional[IntentResult] = None,
+    ku_type_filter: List[str] = None,
+    product_id: str = None,
+    include_related: bool = True,
+    top_k: int = 5,
+) -> Dict[str, Any]:
+    """
+    检索主 KU 并自动获取关联 KU
+    
+    Args:
+        query: 用户查询
+        intent_result: 意图识别结果
+        ku_type_filter: KU 类型过滤（如 ["core", "case"]）
+        product_id: 产品 ID 过滤
+        include_related: 是否包含关联 KU
+        top_k: 返回数量
+    
+    Returns:
+        检索结果，包含主 KU 和关联 KU
+    """
+    # 构建主查询
+    query_truncated = query[:200] if len(query) > 200 else query
+    
+    main_query = {
+        "simple_query_string": {
+            "query": query_truncated,
+            "fields": ["title^3", "summary^2", "full_text", "terms", "key_points"],
+            "default_operator": "or"
+        }
+    }
+    
+    # 构建过滤条件
+    filter_clauses = []
+    
+    if ku_type_filter:
+        filter_clauses.append({"terms": {"ku_type": ku_type_filter}})
+    
+    if product_id:
+        filter_clauses.append({"term": {"product_id": product_id}})
+    
+    # 根据意图添加过滤
+    if intent_result:
+        if intent_result.intent_type.value == "case_study":
+            # 案例查询优先返回 case 类型
+            if not ku_type_filter:
+                filter_clauses.append({"terms": {"ku_type": ["case", "core"]}})
+        elif intent_result.intent_type.value == "quote":
+            # 报价查询优先返回 quote 类型
+            if not ku_type_filter:
+                filter_clauses.append({"terms": {"ku_type": ["quote", "core"]}})
+        
+        if intent_result.scenario_ids:
+            filter_clauses.append({"terms": {"scenario_id": intent_result.scenario_ids}})
+    
+    # 组装查询
+    if filter_clauses:
+        body = {
+            "query": {
+                "bool": {
+                    "must": [main_query],
+                    "filter": filter_clauses,
+                }
+            },
+            "size": top_k,
+        }
+    else:
+        body = {"query": main_query, "size": top_k}
+    
+    try:
+        res = os_client.search(index=settings.os_index, body=body)
+    except Exception as e:
+        logger.error(f"Search with relations error: {e}")
+        return {"hits": [], "related": {}}
+    
+    primary_hits = _parse_hits(res)
+    
+    result = {
+        "hits": primary_hits,
+        "total": len(primary_hits),
+        "related": {},
+    }
+    
+    # 获取关联 KU
+    if include_related and primary_hits:
+        for hit in primary_hits[:3]:  # 前3个主要结果
+            related = _get_related_kus(hit, intent_result)
+            if related:
+                result["related"][hit["id"]] = related
+    
+    return result
+
+
+def _get_related_kus(hit: Dict, intent_result: Optional[IntentResult]) -> List[Dict]:
+    """获取关联的 KU"""
+    related = []
+    
+    # 方式1: 通过 related_ku_ids 字段
+    related_ids = hit.get("related_ku_ids", [])
+    
+    # 方式2: 通过 product_id 查找同产品的其他 KU
+    product_id = hit.get("product_id")
+    
+    if not related_ids and not product_id:
+        return []
+    
+    try:
+        # 构建查询
+        should_clauses = []
+        
+        if related_ids:
+            should_clauses.append({"terms": {"_id": related_ids}})
+        
+        if product_id:
+            # 查找同产品的不同类型 KU
+            ku_type = hit.get("ku_type", "core")
+            other_types = _get_complementary_types(ku_type, intent_result)
+            
+            should_clauses.append({
+                "bool": {
+                    "must": [
+                        {"term": {"product_id": product_id}},
+                        {"terms": {"ku_type": other_types}},
+                    ],
+                    "must_not": [
+                        {"term": {"_id": hit["id"]}}  # 排除自己
+                    ]
+                }
+            })
+        
+        if not should_clauses:
+            return []
+        
+        body = {
+            "query": {
+                "bool": {"should": should_clauses}
+            },
+            "size": 5,
+        }
+        
+        res = os_client.search(index=settings.os_index, body=body)
+        related = _parse_hits(res)
+        
+        # 添加关联类型标记
+        for r in related:
+            if r["id"] in related_ids:
+                r["_relation"] = "explicit"
+            else:
+                r["_relation"] = "same_product"
+        
+    except Exception as e:
+        logger.warning(f"Get related KUs failed: {e}")
+    
+    return related
+
+
+def _get_complementary_types(ku_type: str, intent_result: Optional[IntentResult]) -> List[str]:
+    """根据当前 KU 类型和意图获取互补的 KU 类型"""
+    
+    # 基础互补关系
+    complements = {
+        "core": ["case", "quote", "solution"],
+        "case": ["core", "quote"],
+        "quote": ["core", "solution"],
+        "solution": ["core", "case", "quote"],
+        "whitepaper": ["case", "core"],
+        "faq": ["core", "case"],
+    }
+    
+    result = complements.get(ku_type, ["core"])
+    
+    # 根据意图调整优先级
+    if intent_result:
+        intent_type = intent_result.intent_type.value
+        if intent_type == "case_study" and "case" not in result:
+            result = ["case"] + result
+        elif intent_type == "quote" and "quote" not in result:
+            result = ["quote"] + result
+    
+    return result
+
+
+def search_cases(
+    industry: str = None,
+    product_id: str = None,
+    use_case: str = None,
+    query: str = None,
+    top_k: int = 10,
+) -> List[Dict]:
+    """
+    专门搜索案例
+    
+    Args:
+        industry: 行业过滤
+        product_id: 产品过滤
+        use_case: 使用场景过滤
+        query: 关键词查询
+        top_k: 返回数量
+    
+    Returns:
+        案例 KU 列表
+    """
+    must_clauses = []
+    filter_clauses = [{"term": {"ku_type": "case"}}]
+    
+    if query:
+        query_truncated = query[:200] if len(query) > 200 else query
+        must_clauses.append({
+            "simple_query_string": {
+                "query": query_truncated,
+                "fields": ["title^2", "summary", "full_text"],
+                "default_operator": "or"
+            }
+        })
+    
+    if industry:
+        filter_clauses.append({"term": {"industry_tags": industry}})
+    
+    if product_id:
+        filter_clauses.append({"term": {"product_id": product_id}})
+    
+    if use_case:
+        filter_clauses.append({"term": {"use_case_tags": use_case}})
+    
+    bool_query = {"filter": filter_clauses}
+    if must_clauses:
+        bool_query["must"] = must_clauses
+    else:
+        bool_query["must"] = [{"match_all": {}}]
+    
+    body = {
+        "query": {"bool": bool_query},
+        "size": top_k,
+        "sort": [
+            {"applicability_score": {"order": "desc"}},
+            {"_score": {"order": "desc"}},
+        ],
+    }
+    
+    try:
+        res = os_client.search(index=settings.os_index, body=body)
+    except Exception as e:
+        logger.error(f"Search cases error: {e}")
+        return []
+    
+    return _parse_hits(res)
+
+
+def search_quotes(
+    product_id: str = None,
+    query: str = None,
+    top_k: int = 5,
+) -> List[Dict]:
+    """
+    专门搜索报价
+    
+    Args:
+        product_id: 产品过滤
+        query: 关键词查询
+        top_k: 返回数量
+    
+    Returns:
+        报价 KU 列表
+    """
+    filter_clauses = [{"term": {"ku_type": "quote"}}]
+    
+    if product_id:
+        filter_clauses.append({"term": {"product_id": product_id}})
+    
+    if query:
+        query_truncated = query[:100] if len(query) > 100 else query
+        must_clause = {
+            "simple_query_string": {
+                "query": query_truncated,
+                "fields": ["title^2", "summary", "full_text"],
+                "default_operator": "or"
+            }
+        }
+        body = {
+            "query": {
+                "bool": {
+                    "must": [must_clause],
+                    "filter": filter_clauses,
+                }
+            },
+            "size": top_k,
+        }
+    else:
+        body = {
+            "query": {
+                "bool": {
+                    "must": [{"match_all": {}}],
+                    "filter": filter_clauses,
+                }
+            },
+            "size": top_k,
+            "sort": [{"_score": {"order": "desc"}}],
+        }
+    
+    try:
+        res = os_client.search(index=settings.os_index, body=body)
+    except Exception as e:
+        logger.error(f"Search quotes error: {e}")
+        return []
+    
+    return _parse_hits(res)
+
+
+def get_product_kus(
+    product_id: str,
+    include_types: List[str] = None,
+    top_k: int = 20,
+) -> Dict[str, Any]:
+    """
+    获取产品的所有 KU
+    
+    Args:
+        product_id: 产品 ID
+        include_types: 包含的 KU 类型
+        top_k: 每种类型最多返回数量
+    
+    Returns:
+        按类型分组的 KU
+    """
+    filter_clauses = [{"term": {"product_id": product_id}}]
+    
+    if include_types:
+        filter_clauses.append({"terms": {"ku_type": include_types}})
+    
+    body = {
+        "query": {
+            "bool": {"filter": filter_clauses}
+        },
+        "size": top_k * 5,  # 预留空间
+        "sort": [
+            {"is_primary": {"order": "desc"}},  # 主 KU 优先
+            {"_score": {"order": "desc"}},
+        ],
+    }
+    
+    try:
+        res = os_client.search(index=settings.os_index, body=body)
+    except Exception as e:
+        logger.error(f"Get product KUs error: {e}")
+        return {"product_id": product_id, "kus_by_type": {}, "total": 0}
+    
+    hits = _parse_hits(res)
+    
+    # 按类型分组
+    kus_by_type = {}
+    for hit in hits:
+        ku_type = hit.get("ku_type", "core")
+        if ku_type not in kus_by_type:
+            kus_by_type[ku_type] = []
+        if len(kus_by_type[ku_type]) < top_k:
+            kus_by_type[ku_type].append(hit)
+    
+    # 找出主 KU
+    primary_ku = None
+    for hit in hits:
+        if hit.get("is_primary"):
+            primary_ku = hit
+            break
+    
+    return {
+        "product_id": product_id,
+        "primary_ku": primary_ku,
+        "kus_by_type": kus_by_type,
+        "total": len(hits),
+    }
+
+
+def get_index_stats_enhanced() -> Dict[str, Any]:
+    """获取增强的索引统计信息（包含 ku_type 统计）"""
+    try:
+        count_res = os_client.count(index=settings.os_index)
+        doc_count = count_res.get("count", 0)
+        
+        # 增强聚合统计
+        agg_body = {
+            "size": 0,
+            "aggs": {
+                "scenarios": {"terms": {"field": "scenario_id", "size": 20}},
+                "material_types": {"terms": {"field": "material_type", "size": 20}},
+                "intent_types": {"terms": {"field": "intent_types", "size": 20}},
+                "avg_applicability": {"avg": {"field": "applicability_score"}},
+                # Phase 6 新增
+                "ku_types": {"terms": {"field": "ku_type", "size": 10}},
+                "products": {"terms": {"field": "product_id", "size": 50}},
+                "industries": {"terms": {"field": "industry_tags", "size": 20}},
+                "use_cases": {"terms": {"field": "use_case_tags", "size": 20}},
+                "primary_count": {"filter": {"term": {"is_primary": True}}},
+            }
+        }
+        
+        agg_res = os_client.search(index=settings.os_index, body=agg_body)
+        aggs = agg_res.get("aggregations", {})
+        
+        return {
+            "document_count": doc_count,
+            "scenarios": [
+                {"id": b["key"], "count": b["doc_count"]}
+                for b in aggs.get("scenarios", {}).get("buckets", [])
+            ],
+            "material_types": [
+                {"type": b["key"], "count": b["doc_count"]}
+                for b in aggs.get("material_types", {}).get("buckets", [])
+            ],
+            "intent_types": [
+                {"type": b["key"], "count": b["doc_count"]}
+                for b in aggs.get("intent_types", {}).get("buckets", [])
+            ],
+            "avg_applicability_score": aggs.get("avg_applicability", {}).get("value", 0),
+            # Phase 6 新增
+            "ku_types": [
+                {"type": b["key"], "count": b["doc_count"]}
+                for b in aggs.get("ku_types", {}).get("buckets", [])
+            ],
+            "products": [
+                {"id": b["key"], "count": b["doc_count"]}
+                for b in aggs.get("products", {}).get("buckets", [])
+            ],
+            "industries": [
+                {"industry": b["key"], "count": b["doc_count"]}
+                for b in aggs.get("industries", {}).get("buckets", [])
+            ],
+            "use_cases": [
+                {"use_case": b["key"], "count": b["doc_count"]}
+                for b in aggs.get("use_cases", {}).get("buckets", [])
+            ],
+            "primary_ku_count": aggs.get("primary_count", {}).get("doc_count", 0),
+        }
+    except Exception as e:
+        logger.error(f"Index stats error: {e}")
+        return {"error": str(e)}

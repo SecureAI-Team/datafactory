@@ -1,19 +1,263 @@
-﻿description: "Multi-turn regression"
+﻿description: "AI Data Factory - AOI 检测场景评估测试集"
+
 providers:
-  - id: gateway
+  - id: openai:chat:qwen-plus
     label: adf-gateway
     config:
-      apiBaseUrl: http://localhost/api/v1
+      apiBaseUrl: http://localhost:8000/v1
       apiKey: dummy
+
+defaultTest:
+  options:
+    provider:
+      id: openai:chat:qwen-plus
+      config:
+        apiBaseUrl: http://localhost:8000/v1
+
 tests:
-  - description: sales qa grounded
-    prompts:
-      - role: user
-        content: "Tell me about product Alpha for BFSI"
-      - role: user
-        content: "Give bullets with citations"
+  # ==================== 参数查询测试 ====================
+  - description: "参数查询 - AOI8000 检测精度"
+    vars:
+      query: "AOI8000的检测精度是多少？"
     assert:
       - type: contains
-        value: "["
-      - type: notContains
-        value: "hallucination"
+        value: "0.01"
+      - type: contains-any
+        value: ["mm", "毫米"]
+
+  - description: "参数查询 - AOI8000 功率"
+    vars:
+      query: "AOI8000功率多大？"
+    assert:
+      - type: contains
+        value: "200"
+      - type: contains-any
+        value: ["W", "瓦"]
+
+  - description: "参数查询 - AOI8000 产能"
+    vars:
+      query: "AOI8000的产能是多少？"
+    assert:
+      - type: contains
+        value: "5000"
+      - type: contains-any
+        value: ["片/小时", "片每小时", "pcs/h"]
+
+  - description: "参数查询 - AOI5000 检测精度"
+    vars:
+      query: "AOI5000检测精度？"
+    assert:
+      - type: contains
+        value: "0.02"
+
+  - description: "参数查询 - AOI5000 产能"
+    vars:
+      query: "AOI5000产能多少？"
+    assert:
+      - type: contains
+        value: "3500"
+
+  # ==================== 报价查询测试 ====================
+  - description: "报价查询 - AOI8000 标准版"
+    vars:
+      query: "AOI8000标准版多少钱？"
+    assert:
+      - type: contains-any
+        value: ["680000", "68万", "680,000"]
+
+  - description: "报价查询 - AOI8000 专业版"
+    vars:
+      query: "AOI8000专业版的价格是多少？"
+    assert:
+      - type: contains-any
+        value: ["970000", "97万", "970,000"]
+
+  - description: "报价查询 - AOI8000 旗舰版"
+    vars:
+      query: "AOI8000旗舰版报价"
+    assert:
+      - type: contains-any
+        value: ["1230000", "123万", "1,230,000"]
+
+  - description: "报价查询 - AOI5000 标准版"
+    vars:
+      query: "AOI5000多少钱？"
+    assert:
+      - type: contains-any
+        value: ["380000", "38万", "380,000"]
+
+  # ==================== 规格对比测试 ====================
+  - description: "规格对比 - AOI8000 vs AOI5000"
+    vars:
+      query: "AOI8000和AOI5000有什么区别？"
+    assert:
+      - type: contains-any
+        value: ["精度", "产能", "功率"]
+      - type: contains
+        value: "AOI8000"
+      - type: contains
+        value: "AOI5000"
+
+  - description: "规格对比 - 版本对比"
+    vars:
+      query: "AOI8000标准版和专业版有什么区别？"
+    assert:
+      - type: contains-any
+        value: ["AI", "深度学习", "SPC", "MES"]
+
+  # ==================== 案例检索测试 ====================
+  - description: "案例检索 - 新能源行业"
+    vars:
+      query: "给我找一个新能源行业的AOI案例"
+    assert:
+      - type: contains-any
+        value: ["比亚迪", "宁德时代", "电池", "BMS", "储能"]
+
+  - description: "案例检索 - 电子制造"
+    vars:
+      query: "有没有电子制造行业的成功案例？"
+    assert:
+      - type: contains-any
+        value: ["华为", "富士康", "PCB", "SMT"]
+
+  - description: "案例检索 - 通信行业"
+    vars:
+      query: "通信设备行业的AOI案例"
+    assert:
+      - type: contains-any
+        value: ["中兴", "5G", "基站"]
+
+  - description: "案例检索 - 汽车电子"
+    vars:
+      query: "汽车电子的检测案例"
+    assert:
+      - type: contains-any
+        value: ["比亚迪", "汽车", "BMS", "ECU", "ADAS"]
+
+  # ==================== 计算选型测试 ====================
+  - description: "计算选型 - 设备数量计算"
+    vars:
+      query: "日产10万片PCB需要几台AOI8000？"
+    assert:
+      - type: contains-any
+        value: ["1台", "一台", "1 台", "至少1"]
+      - type: llm-rubric
+        value: "回答中包含计算过程或依据（如产能5000片/小时）"
+
+  - description: "计算选型 - 产能匹配"
+    vars:
+      query: "产能要求5000片/小时，应该选AOI8000还是AOI5000？"
+    assert:
+      - type: contains
+        value: "AOI8000"
+      - type: llm-rubric
+        value: "回答解释了选择AOI8000的原因（产能匹配或略超）"
+
+  - description: "计算选型 - 低需求推荐"
+    vars:
+      query: "日产2万片，精度要求0.02mm够用，推荐哪款？"
+    assert:
+      - type: contains
+        value: "AOI5000"
+      - type: llm-rubric
+        value: "回答提到性价比或成本因素"
+
+  # ==================== 技术问答测试 ====================
+  - description: "技术问答 - 缺陷类型"
+    vars:
+      query: "AOI能检测哪些缺陷类型？"
+    assert:
+      - type: contains-any
+        value: ["虚焊", "漏焊", "连锡", "桥连"]
+      - type: contains-any
+        value: ["缺件", "错件", "偏移"]
+
+  - description: "技术问答 - 误报率降低"
+    vars:
+      query: "如何降低AOI的误报率？"
+    assert:
+      - type: contains-any
+        value: ["AI", "深度学习", "算法", "训练", "样本"]
+
+  - description: "技术问答 - MES对接"
+    vars:
+      query: "AOI8000支持MES对接吗？"
+    assert:
+      - type: contains-any
+        value: ["支持", "MES", "SECS", "API", "接口"]
+
+  - description: "技术问答 - 3D检测"
+    vars:
+      query: "AOI8000支持3D检测吗？"
+    assert:
+      - type: contains-any
+        value: ["旗舰版", "3D", "可选", "高度测量"]
+
+  # ==================== 方案咨询测试 ====================
+  - description: "方案咨询 - PCB产线"
+    vars:
+      query: "我们是做PCB的，想上AOI检测，有什么方案推荐？"
+    assert:
+      - type: contains-any
+        value: ["AOI8000", "AOI5000", "方案", "产线"]
+      - type: llm-rubric
+        value: "回答包含具体的产品推荐或方案建议"
+
+  - description: "方案咨询 - SMT产线配置"
+    vars:
+      query: "SMT产线需要配几台AOI？"
+    assert:
+      - type: llm-rubric
+        value: "回答询问产线节拍或产能需求，或给出一般性建议"
+
+  - description: "方案咨询 - 汽车电子要求"
+    vars:
+      query: "汽车电子产线对AOI有什么特殊要求？"
+    assert:
+      - type: contains-any
+        value: ["追溯", "IATF", "零缺陷", "可靠性", "功能安全"]
+
+  # ==================== 多轮对话测试 ====================
+  - description: "多轮对话 - 追问细节"
+    vars:
+      query: "AOI8000的价格"
+    assert:
+      - type: contains-any
+        value: ["标准版", "专业版", "旗舰版", "68万", "97万", "123万"]
+
+  # ==================== 边界测试 ====================
+  - description: "边界测试 - 不存在的产品"
+    vars:
+      query: "AOI9000的价格是多少？"
+    assert:
+      - type: llm-rubric
+        value: "回答表明没有找到AOI9000的信息，或建议查看现有产品"
+
+  - description: "边界测试 - 模糊查询"
+    vars:
+      query: "你们的AOI怎么样？"
+    assert:
+      - type: contains-any
+        value: ["AOI8000", "AOI5000", "检测"]
+      - type: llm-rubric
+        value: "回答提供了AOI产品的概述或询问更多需求"
+
+  # ==================== 回答质量测试 ====================
+  - description: "回答质量 - 引用来源"
+    vars:
+      query: "AOI8000的技术参数"
+    assert:
+      - type: llm-rubric
+        value: "回答中包含具体数值（如检测精度、功率、产能）"
+
+  - description: "回答质量 - 不编造"
+    vars:
+      query: "AOI8000的售后服务政策"
+    assert:
+      - type: contains-any
+        value: ["1年", "质保", "保修", "响应", "延保"]
+      - type: not-contains
+        value: "我不确定"
+
+# 输出配置
+outputPath: ./eval_results.json

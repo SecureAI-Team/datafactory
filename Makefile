@@ -48,7 +48,22 @@ test:
 	$(COMPOSE) run --rm api pytest -q
 
 eval:
-	promptfoo eval --config services/eval/promptfoo.yaml || (echo "Install promptfoo: npm install -g promptfoo"; exit 1)
+	@which promptfoo > /dev/null 2>&1 || (echo "❌ promptfoo 未安装，请先运行: npm install -g promptfoo" && exit 1)
+	promptfoo eval --config services/eval/promptfoo.yaml
+
+# 使用 Docker 运行评估（无需本地安装 promptfoo）
+eval-docker:
+	docker run --rm -it --network host \
+		-v $(PWD)/services/eval:/eval \
+		-w /eval \
+		node:18 bash -c "npm install -g promptfoo && promptfoo eval --config promptfoo.yaml"
+
+# 安装 promptfoo
+install-promptfoo:
+	@echo "=== 安装 promptfoo ==="
+	@which npm > /dev/null 2>&1 || (echo "❌ 请先安装 Node.js: https://nodejs.org/" && exit 1)
+	npm install -g promptfoo
+	@echo "✅ promptfoo 安装完成"
 
 lint:
 	$(COMPOSE) run --rm api ruff check .

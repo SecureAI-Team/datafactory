@@ -56,7 +56,7 @@ eval-docker:
 	docker run --rm -it --network host \
 		-v $(PWD)/services/eval:/eval \
 		-w /eval \
-		node:18 bash -c "npm install -g promptfoo && promptfoo eval --config promptfoo.yaml"
+		node:20 bash -c "npm install -g promptfoo && promptfoo eval --config promptfoo.yaml"
 
 # 安装 promptfoo
 install-promptfoo:

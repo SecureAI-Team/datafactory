@@ -56,7 +56,65 @@ eval-docker:
 	docker run --rm -it --network host \
 		-v $(PWD)/services/eval:/eval \
 		-w /eval \
-		node:20 bash -c "npm install -g promptfoo && promptfoo eval --config promptfoo.yaml"
+		promptfoo/promptfoo:latest eval --config promptfoo.yaml
+
+# ==================== 前端构建 ====================
+
+# 构建用户前端
+build-web-ui:
+	cd services/web-ui && npm install && npm run build
+
+# 开发模式运行用户前端（本地）
+dev-web-ui:
+	cd services/web-ui && npm install && npm run dev
+
+# 构建并启动用户前端（Docker）
+up-web-ui:
+	$(COMPOSE) up -d --build web-ui
+
+# 构建管理后台
+build-admin-ui:
+	cd services/admin-ui && npm install && npm run build
+
+# 开发模式运行管理后台（本地）
+dev-admin-ui:
+	cd services/admin-ui && npm install && npm run dev
+
+# 构建并启动管理后台（Docker）
+up-admin-ui:
+	$(COMPOSE) up -d --build admin-ui
+
+# 构建并启动所有前端
+up-frontends:
+	$(COMPOSE) up -d --build web-ui admin-ui
+
+# 数据库迁移（包含新表）
+migrate:
+	$(COMPOSE) run --rm api alembic upgrade head
+
+# 完整初始化（包括前端表）
+init-full: init migrate
+	@echo "✅ 完整初始化完成（包含用户/对话/配置表）"
+
+# 开发模式运行所有前端
+dev-all:
+	@echo "Starting API server..."
+	$(COMPOSE) up -d api
+	@echo "Starting web-ui on port 3002..."
+	cd services/web-ui && npm run dev &
+	@echo "Starting admin-ui on port 3003..."
+	cd services/admin-ui && npm run dev &
+	@echo "✅ 所有服务已启动"
+	@echo "  - API: http://localhost:8000"
+	@echo "  - 用户前端: http://localhost:3002"
+	@echo "  - 管理后台: http://localhost:3003"
+
+# 备用方式：使用 npx（跳过原生模块编译问题）
+eval-npx:
+	docker run --rm -it --network host \
+		-v $(PWD)/services/eval:/eval \
+		-w /eval \
+		node:20-slim bash -c "npx --yes promptfoo@latest eval --config promptfoo.yaml"
 
 # 安装 promptfoo
 install-promptfoo:
@@ -697,6 +755,36 @@ status:
 	@echo "make pipeline - 运行完整 Pipeline"
 	@echo "make buckets  - 查看 MinIO 存储"
 
+# ==================== 升级命令 ====================
+
+# 完整升级（备份 + 拉取 + 重建 + 迁移）
+upgrade:
+	@bash upgrade.sh
+
+# 快速升级（跳过备份）
+upgrade-quick:
+	@bash upgrade.sh quick
+
+# 仅升级前端
+upgrade-frontend:
+	@bash upgrade.sh frontend
+
+# 仅升级 API
+upgrade-api:
+	@bash upgrade.sh api
+
+# 仅重建（不拉取代码）
+upgrade-rebuild:
+	@bash upgrade.sh rebuild
+
+# 验证升级状态
+upgrade-verify:
+	@bash upgrade.sh verify
+
+# 备份数据
+backup:
+	@bash upgrade.sh backup
+
 help:
 	@echo "AI Data Factory - 可用命令:"
 	@echo ""
@@ -735,6 +823,15 @@ help:
 	@echo "    make reload-dags      - 重新加载DAG代码"
 	@echo "    make trigger-dedup    - 触发重复检测"
 	@echo "    make ku-relations     - 查看KU关系统计"
+	@echo ""
+	@echo "  升级（已部署环境）:"
+	@echo "    make upgrade          - 完整升级（备份+拉取+重建+迁移）"
+	@echo "    make upgrade-quick    - 快速升级（跳过备份）"
+	@echo "    make upgrade-frontend - 仅升级前端"
+	@echo "    make upgrade-api      - 仅升级API"
+	@echo "    make upgrade-rebuild  - 仅重建（不拉取代码）"
+	@echo "    make upgrade-verify   - 验证升级状态"
+	@echo "    make backup           - 备份数据"
 	@echo ""
 	@echo "  测试数据:"
 	@echo "    make upload-test-data     - 上传所有测试数据"

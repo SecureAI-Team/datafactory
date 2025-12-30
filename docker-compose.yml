@@ -182,6 +182,24 @@ services:
     ports: ["3001:8080"]
     depends_on: [api]
 
+  # 自研用户前端
+  web-ui:
+    build:
+      context: ./services/web-ui
+      dockerfile: Dockerfile
+    ports: ["3002:80"]
+    depends_on: [api]
+    restart: unless-stopped
+
+  # 自研管理后台
+  admin-ui:
+    build:
+      context: ./services/admin-ui
+      dockerfile: Dockerfile
+    ports: ["3003:80"]
+    depends_on: [api]
+    restart: unless-stopped
+
   n8n:
     image: n8nio/n8n:1.82.1
     environment:

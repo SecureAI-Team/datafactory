@@ -11,6 +11,12 @@ from .api import dedup
 from .api import products
 from .api import bd
 
+# 新增：自研前端 API
+from .api import auth
+from .api import users
+from .api import conversations as conversations_v2
+from .api import settings
+
 app = FastAPI(
     title="AI Data Factory API",
     description="多轮对话 + RAG + 用户反馈优化",
@@ -61,6 +67,20 @@ app.include_router(products.router, prefix="/api", tags=["products"])
 
 app.include_router(bd.router, tags=["bd-sales"])
 app.include_router(bd.router, prefix="/api", tags=["bd-sales"])
+
+# ==================== 自研前端 API ====================
+
+# 认证 API
+app.include_router(auth.router, tags=["auth"])
+
+# 用户管理 API
+app.include_router(users.router, tags=["users"])
+
+# 对话管理 API (新版 - 支持历史会话)
+app.include_router(conversations_v2.router, tags=["conversations-v2"])
+
+# 系统配置 API
+app.include_router(settings.router, tags=["settings"])
 
 @app.get("/health")
 def health():

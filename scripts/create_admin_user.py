@@ -86,11 +86,21 @@ def create_users():
             
             if result:
                 user_id, existing_hash = result
-                # 检查密码哈希是否有效（以 $2b$ 开头且长度足够）
-                if existing_hash and existing_hash.startswith('$2b$') and len(existing_hash) >= 59:
-                    print(f"  ⏭️  用户 '{user_data['username']}' 已存在（密码有效），跳过")
+                # 验证密码是否正确（不仅检查格式，还要检查密码能否验证）
+                password_valid = False
+                if existing_hash and existing_hash.startswith('$2b$'):
+                    try:
+                        password_valid = bcrypt.checkpw(
+                            user_data["password"].encode('utf-8'),
+                            existing_hash.encode('utf-8')
+                        )
+                    except Exception:
+                        password_valid = False
+                
+                if password_valid:
+                    print(f"  ⏭️  用户 '{user_data['username']}' 已存在（密码正确），跳过")
                 else:
-                    # 更新无效的密码哈希
+                    # 更新密码哈希
                     session.execute(
                         text("UPDATE users SET password_hash = :password_hash WHERE id = :user_id"),
                         {"password_hash": password_hash, "user_id": user_id}

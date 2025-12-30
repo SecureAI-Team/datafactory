@@ -55,6 +55,8 @@ class ConversationResponse(BaseModel):
 
 
 class MessageResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+    
     id: int
     message_id: str
     role: str
@@ -84,7 +86,7 @@ async def list_conversations(
 ):
     """获取用户的对话列表（分组）"""
     service = ConversationService(db)
-    groups = service.list_conversations_grouped(user.id)
+    groups = service.list_conversations_grouped(str(user.id))
     
     return ConversationListResponse(
         pinned=[ConversationResponse(**c.to_dict()) for c in groups["pinned"]],

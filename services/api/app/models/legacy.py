@@ -1,7 +1,8 @@
-﻿from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, ForeignKey, Boolean, Float
+"""Legacy models - original data models from the core system"""
+from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, ForeignKey, Boolean, Float
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
-from .db import Base
+from ..db import Base
 
 
 # ==================== KU 类型常量 ====================
@@ -169,3 +170,4 @@ class DedupGroup(Base):
     reviewed_by = Column(String(100))
     reviewed_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+

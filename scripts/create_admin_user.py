@@ -18,19 +18,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'services', 'ap
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-# Try to use passlib, fallback to bcrypt directly
-try:
-    from passlib.context import CryptContext
-    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-    
-    def hash_password(password: str) -> str:
-        return pwd_context.hash(password)
-except Exception:
-    # Fallback: use bcrypt directly
-    import bcrypt
-    
-    def hash_password(password: str) -> str:
-        return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+# 直接使用 bcrypt 库（避免 passlib 兼容性问题）
+import bcrypt
+
+def hash_password(password: str) -> str:
+    """生成 bcrypt 密码哈希"""
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
 # Default users to create
 DEFAULT_USERS = [

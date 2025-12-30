@@ -214,6 +214,10 @@ run_migrations() {
     }
     
     log_success "数据库迁移完成"
+    
+    # 创建默认用户
+    log_info "创建默认用户..."
+    docker compose run --rm -v "$(pwd)":/work -w /work api python scripts/create_admin_user.py 2>/dev/null || log_warn "用户创建跳过（可能已存在）"
 }
 
 #===============================================================================

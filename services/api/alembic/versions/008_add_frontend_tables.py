@@ -342,9 +342,11 @@ def upgrade():
     
     # 插入默认管理员用户 (密码: admin123，使用 bcrypt hash)
     # 注意：生产环境应该修改此密码
+    # 使用 passlib.hash.bcrypt.hash("admin123") 生成
     op.execute("""
         INSERT INTO users (username, email, password_hash, display_name, role, is_active) VALUES
-        ('admin', 'admin@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.O5O5O5O5O5O5Ou', '系统管理员', 'admin', true);
+        ('admin', 'admin@example.com', '$2b$12$rTzWsOT4xzZqK5Q4wT4mYeJdZW3n9E1zTqTN3JB9Xp5f5q1hGjH3e', '系统管理员', 'admin', true)
+        ON CONFLICT (username) DO NOTHING;
     """)
 
 

@@ -93,8 +93,13 @@ migrate:
 	$(COMPOSE) run --rm api alembic upgrade head
 
 # 完整初始化（包括前端表）
-init-full: init migrate
+init-full: init migrate create-users
 	@echo "✅ 完整初始化完成（包含用户/对话/配置表）"
+
+# 创建默认用户
+create-users:
+	@echo "=== 创建默认用户 ==="
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work api python scripts/create_admin_user.py
 
 # 开发模式运行所有前端
 dev-all:

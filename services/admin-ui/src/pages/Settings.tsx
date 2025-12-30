@@ -1,12 +1,10 @@
-import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import { Card, Menu, Typography, Tabs, Form, Input, Switch, Button, Table, Tag, Space, message, Select, Progress } from 'antd'
+import { useNavigate, useLocation } from 'react-router-dom'
+import { Card, Typography, Tabs, Form, Input, Switch, Button, Table, Tag, Space, message } from 'antd'
 import {
   RobotOutlined,
   ApiOutlined,
   SettingOutlined,
   SyncOutlined,
-  SafetyOutlined,
-  CloudServerOutlined,
   CheckCircleOutlined,
   ExclamationCircleOutlined,
 } from '@ant-design/icons'

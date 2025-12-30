@@ -165,7 +165,7 @@ export default function Sidebar() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [searchQuery, setSearchQuery] = useState('')
-  const { setConversations, setCurrentConversation } = useConversationStore()
+  const { setConversations } = useConversationStore()
   
   // Fetch conversations
   const { data: conversations } = useQuery({

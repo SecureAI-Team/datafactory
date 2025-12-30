@@ -7,9 +7,7 @@ import {
   Clock,
   XCircle,
   Award,
-  TrendingUp,
   BookOpen,
-  Star,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import apiClient from '../api/client'

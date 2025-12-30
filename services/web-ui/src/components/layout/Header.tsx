@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bell, User, LogOut, Settings, ChevronDown, Folder } from 'lucide-react'
+import { Bell, LogOut, Settings, ChevronDown, Folder } from 'lucide-react'
 import { useAuthStore } from '../../store/authStore'
 import { authApi } from '../../api/auth'
 

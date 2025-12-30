@@ -15,12 +15,22 @@ import sys
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'services', 'api'))
 
-from passlib.context import CryptContext
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-# Password context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Try to use passlib, fallback to bcrypt directly
+try:
+    from passlib.context import CryptContext
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    
+    def hash_password(password: str) -> str:
+        return pwd_context.hash(password)
+except Exception:
+    # Fallback: use bcrypt directly
+    import bcrypt
+    
+    def hash_password(password: str) -> str:
+        return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
 # Default users to create
 DEFAULT_USERS = [
@@ -74,16 +84,26 @@ def create_users():
         for user_data in DEFAULT_USERS:
             # 检查用户是否已存在
             result = session.execute(
-                text("SELECT id FROM users WHERE username = :username"),
+                text("SELECT id, password_hash FROM users WHERE username = :username"),
                 {"username": user_data["username"]}
             ).fetchone()
             
-            if result:
-                print(f"  ⏭️  用户 '{user_data['username']}' 已存在，跳过")
-                continue
-            
             # 生成密码哈希
-            password_hash = pwd_context.hash(user_data["password"])
+            password_hash = hash_password(user_data["password"])
+            
+            if result:
+                user_id, existing_hash = result
+                # 检查密码哈希是否有效（以 $2b$ 开头且长度足够）
+                if existing_hash and existing_hash.startswith('$2b$') and len(existing_hash) >= 59:
+                    print(f"  ⏭️  用户 '{user_data['username']}' 已存在（密码有效），跳过")
+                else:
+                    # 更新无效的密码哈希
+                    session.execute(
+                        text("UPDATE users SET password_hash = :password_hash WHERE id = :user_id"),
+                        {"password_hash": password_hash, "user_id": user_id}
+                    )
+                    print(f"  🔄 更新用户 '{user_data['username']}' 的密码哈希")
+                continue
             
             # 插入用户
             session.execute(

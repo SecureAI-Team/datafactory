@@ -1,12 +1,264 @@
-import { useState } from 'react'
-import { Card, Table, Tag, Button, Space, Tabs, Modal, Input, message, Typography } from 'antd'
-import { CheckOutlined, CloseOutlined, QuestionCircleOutlined, EyeOutlined } from '@ant-design/icons'
+import { useState, useEffect } from 'react'
+import { Card, Table, Tag, Button, Space, Tabs, Modal, Input, message, Typography, Spin, Alert } from 'antd'
+import { CheckOutlined, CloseOutlined, QuestionCircleOutlined, EyeOutlined, DownloadOutlined, FileTextOutlined, FilePdfOutlined, FileImageOutlined } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { reviewApi, Contribution } from '../api'
 
-const { Title } = Typography
+const { Title, Paragraph, Text } = Typography
 const { TextArea } = Input
 
+// ==================== Preview Modal Component ====================
+interface PreviewModalProps {
+  visible: boolean
+  item: Contribution | null
+  onClose: () => void
+  onApprove: (id: number) => void
+  onReject: (id: number) => void
+  isApproving: boolean
+  typeLabels: Record<string, string>
+}
+
+function PreviewModal({ visible, item, onClose, onApprove, onReject, isApproving, typeLabels }: PreviewModalProps) {
+  const [previewData, setPreviewData] = useState<{
+    url?: string
+    content?: string
+    mime_type?: string
+    type?: string
+    loading: boolean
+    error?: string
+  }>({ loading: false })
+
+  // Fetch preview data when modal opens
+  useEffect(() => {
+    if (visible && item) {
+      loadPreview(item)
+    } else {
+      setPreviewData({ loading: false })
+    }
+  }, [visible, item])
+
+  const loadPreview = async (contribution: Contribution) => {
+    setPreviewData({ loading: true })
+    
+    try {
+      // For draft KUs or text files, try to get content first
+      const contentResult = await reviewApi.getFileContent(contribution.id)
+      
+      if (contentResult.content) {
+        setPreviewData({
+          content: contentResult.content,
+          mime_type: contentResult.mime_type,
+          type: contentResult.type,
+          loading: false
+        })
+      } else {
+        // For binary files, get preview URL
+        const previewResult = await reviewApi.getPreviewUrl(contribution.id)
+        setPreviewData({
+          url: previewResult.url,
+          mime_type: previewResult.mime_type,
+          type: 'binary',
+          loading: false
+        })
+      }
+    } catch (error) {
+      console.error('Failed to load preview:', error)
+      setPreviewData({
+        loading: false,
+        error: '无法加载预览'
+      })
+    }
+  }
+
+  const renderPreview = () => {
+    if (previewData.loading) {
+      return (
+        <div style={{ textAlign: 'center', padding: 40 }}>
+          <Spin size="large" />
+          <p style={{ marginTop: 16, color: '#94a3b8' }}>加载预览中...</p>
+        </div>
+      )
+    }
+
+    if (previewData.error) {
+      return (
+        <Alert type="warning" message={previewData.error} />
+      )
+    }
+
+    if (previewData.content) {
+      // Text content preview
+      return (
+        <div style={{ 
+          background: '#0f172a', 
+          borderRadius: 8, 
+          padding: 16, 
+          maxHeight: 400, 
+          overflow: 'auto',
+          fontFamily: 'monospace',
+          fontSize: 13,
+          whiteSpace: 'pre-wrap',
+          color: '#e2e8f0'
+        }}>
+          {previewData.content}
+        </div>
+      )
+    }
+
+    if (previewData.url) {
+      const mime = previewData.mime_type || ''
+      
+      // Image preview
+      if (mime.startsWith('image/')) {
+        return (
+          <div style={{ textAlign: 'center' }}>
+            <img 
+              src={previewData.url} 
+              alt="Preview" 
+              style={{ maxWidth: '100%', maxHeight: 400, borderRadius: 8 }}
+            />
+          </div>
+        )
+      }
+      
+      // PDF preview (iframe)
+      if (mime === 'application/pdf') {
+        return (
+          <div>
+            <iframe 
+              src={previewData.url} 
+              style={{ width: '100%', height: 500, border: 'none', borderRadius: 8 }}
+              title="PDF Preview"
+            />
+            <div style={{ marginTop: 8, textAlign: 'center' }}>
+              <Button icon={<DownloadOutlined />} href={previewData.url} target="_blank">
+                下载 PDF
+              </Button>
+            </div>
+          </div>
+        )
+      }
+      
+      // Other binary files - download link
+      return (
+        <div style={{ textAlign: 'center', padding: 40 }}>
+          <FilePdfOutlined style={{ fontSize: 48, color: '#64748b' }} />
+          <p style={{ marginTop: 16, color: '#94a3b8' }}>
+            此文件类型不支持在线预览
+          </p>
+          <Button type="primary" icon={<DownloadOutlined />} href={previewData.url} target="_blank">
+            下载文件查看
+          </Button>
+        </div>
+      )
+    }
+
+    // No file attached (draft only)
+    if (item?.contribution_type === 'signal' || item?.contribution_type === 'draft_ku') {
+      return (
+        <div style={{ 
+          background: '#1e293b', 
+          borderRadius: 8, 
+          padding: 16,
+          color: '#94a3b8'
+        }}>
+          <Text type="secondary">这是一个草稿/信号贡献，无附件文件</Text>
+        </div>
+      )
+    }
+
+    return (
+      <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>
+        无法加载预览
+      </div>
+    )
+  }
+
+  if (!item) return null
+
+  return (
+    <Modal
+      title={item.title || '贡献详情'}
+      open={visible}
+      onCancel={onClose}
+      footer={[
+        <Button key="close" onClick={onClose}>
+          关闭
+        </Button>,
+        item.status === 'pending' && (
+          <Button
+            key="reject"
+            danger
+            onClick={() => onReject(item.id)}
+          >
+            拒绝
+          </Button>
+        ),
+        item.status === 'pending' && (
+          <Button
+            key="approve"
+            type="primary"
+            loading={isApproving}
+            onClick={() => onApprove(item.id)}
+          >
+            批准
+          </Button>
+        ),
+      ].filter(Boolean)}
+      width={900}
+    >
+      <div style={{ marginBottom: 16 }}>
+        <Space wrap>
+          <Tag color="blue">{typeLabels[item.contribution_type] || item.contribution_type}</Tag>
+          {item.ku_type_code && <Tag color="green">{item.ku_type_code}</Tag>}
+          {item.product_id && <Tag color="purple">{item.product_id}</Tag>}
+          <Tag>{item.visibility}</Tag>
+        </Space>
+      </div>
+      
+      <div style={{ marginBottom: 16, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <div><Text type="secondary">贡献者:</Text> <Text strong>{item.contributor_name}</Text></div>
+        <div><Text type="secondary">提交时间:</Text> <Text>{item.created_at}</Text></div>
+        {item.file_name && (
+          <div><Text type="secondary">文件:</Text> <Text>{item.file_name} ({Math.round((item.file_size || 0) / 1024)} KB)</Text></div>
+        )}
+        {item.trigger_type && (
+          <div><Text type="secondary">触发场景:</Text> <Text>{item.trigger_type}</Text></div>
+        )}
+      </div>
+      
+      {item.description && (
+        <Paragraph>
+          <Text type="secondary">描述: </Text>
+          {item.description}
+        </Paragraph>
+      )}
+      
+      {item.query_text && (
+        <Paragraph>
+          <Text type="secondary">触发问题: </Text>
+          <Text code>{item.query_text}</Text>
+        </Paragraph>
+      )}
+      
+      {item.review_comment && (
+        <Alert
+          type="info"
+          message="审核意见"
+          description={item.review_comment}
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      
+      <div style={{ marginTop: 16 }}>
+        <Text type="secondary" style={{ marginBottom: 8, display: 'block' }}>文件预览:</Text>
+        {renderPreview()}
+      </div>
+    </Modal>
+  )
+}
+
+// ==================== Main Review Component ====================
 export default function Review() {
   const queryClient = useQueryClient()
   const [activeTab, setActiveTab] = useState('pending')
@@ -296,70 +548,21 @@ export default function Review() {
       </Card>
       
       {/* Preview Modal */}
-      <Modal
-        title={previewModal.item?.title || '贡献详情'}
-        open={previewModal.visible}
-        onCancel={() => setPreviewModal({ visible: false, item: null })}
-        footer={[
-          <Button key="close" onClick={() => setPreviewModal({ visible: false, item: null })}>
-            关闭
-          </Button>,
-          previewModal.item?.status === 'pending' && (
-            <Button
-              key="reject"
-              danger
-              onClick={() => {
-                setPreviewModal({ visible: false, item: null })
-                setRejectModal({ visible: true, id: previewModal.item?.id || null })
-              }}
-            >
-              拒绝
-            </Button>
-          ),
-          previewModal.item?.status === 'pending' && (
-            <Button
-              key="approve"
-              type="primary"
-              loading={approveMutation.isPending}
-              onClick={() => {
-                if (previewModal.item) {
-                  handleApprove(previewModal.item.id)
-                  setPreviewModal({ visible: false, item: null })
-                }
-              }}
-            >
-              批准
-            </Button>
-          ),
-        ].filter(Boolean)}
-        width={800}
-      >
-        {previewModal.item && (
-          <div>
-            <p><strong>贡献者:</strong> {previewModal.item.contributor_name}</p>
-            <p><strong>贡献类型:</strong> {typeLabels[previewModal.item.contribution_type] || previewModal.item.contribution_type}</p>
-            <p><strong>KU 类型:</strong> {previewModal.item.ku_type_code || '-'}</p>
-            <p><strong>产品:</strong> {previewModal.item.product_id || '-'}</p>
-            <p><strong>触发场景:</strong> {previewModal.item.trigger_type || '-'}</p>
-            <p><strong>提交时间:</strong> {previewModal.item.created_at}</p>
-            {previewModal.item.description && (
-              <p><strong>描述:</strong> {previewModal.item.description}</p>
-            )}
-            {previewModal.item.query_text && (
-              <p><strong>触发问题:</strong> {previewModal.item.query_text}</p>
-            )}
-            {previewModal.item.file_name && (
-              <p><strong>文件:</strong> {previewModal.item.file_name} ({Math.round((previewModal.item.file_size || 0) / 1024)} KB)</p>
-            )}
-            {previewModal.item.review_comment && (
-              <p><strong>审核意见:</strong> {previewModal.item.review_comment}</p>
-            )}
-            <div style={{ marginTop: 16, padding: 16, background: '#1e293b', borderRadius: 8 }}>
-              <p style={{ color: '#94a3b8' }}>文件预览区域（实际实现需要根据文件类型显示内容）</p>
-            </div>
-          </div>
-        )}
-      </Modal>
+      <PreviewModal
+        visible={previewModal.visible}
+        item={previewModal.item}
+        onClose={() => setPreviewModal({ visible: false, item: null })}
+        onApprove={(id) => {
+          handleApprove(id)
+          setPreviewModal({ visible: false, item: null })
+        }}
+        onReject={(id) => {
+          setPreviewModal({ visible: false, item: null })
+          setRejectModal({ visible: true, id })
+        }}
+        isApproving={approveMutation.isPending}
+        typeLabels={typeLabels}
+      />
       
       {/* Reject Modal */}
       <Modal

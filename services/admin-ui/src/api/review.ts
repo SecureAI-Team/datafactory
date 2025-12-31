@@ -78,6 +78,18 @@ export const reviewApi = {
     const response = await apiClient.get('/api/review/stats/summary')
     return response.data
   },
+
+  // Get preview URL for file
+  getPreviewUrl: async (contributionId: number): Promise<{ url: string; mime_type: string }> => {
+    const response = await apiClient.get(`/api/review/${contributionId}/preview`)
+    return response.data
+  },
+
+  // Get file content (for text files)
+  getFileContent: async (contributionId: number): Promise<{ content: string; mime_type: string }> => {
+    const response = await apiClient.get(`/api/review/${contributionId}/content`)
+    return response.data
+  },
 }
 
 export default reviewApi

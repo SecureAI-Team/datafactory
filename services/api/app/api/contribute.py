@@ -102,6 +102,23 @@ class LeaderboardEntry(BaseModel):
     citation_count: int
 
 
+class ClassifyRequest(BaseModel):
+    """Request for material classification"""
+    filename: str
+    content: str  # First 2000 chars of file content
+    mime_type: Optional[str] = None
+
+
+class ClassifyResponse(BaseModel):
+    """Classification suggestion from LLM"""
+    ku_type_code: str
+    ku_type_name: str
+    product_id: Optional[str] = None
+    tags: List[str] = []
+    confidence: float
+    reason: str
+
+
 # ==================== API Endpoints ====================
 
 @router.post("/upload", response_model=ContributionResponse)
@@ -182,6 +199,125 @@ async def upload_file(
     db.refresh(contribution)
     
     return ContributionResponse(**contribution.to_dict())
+
+
+@router.post("/classify", response_model=ClassifyResponse)
+async def classify_material(
+    body: ClassifyRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Use LLM to classify uploaded material.
+    Returns suggested KU type, product, and tags based on content analysis.
+    """
+    import json
+    import logging
+    from openai import OpenAI
+    from ..config import settings
+    from ..models.config import KUTypeDefinition
+    
+    logger = logging.getLogger(__name__)
+    
+    # Get all KU types for context
+    ku_types = db.query(KUTypeDefinition).filter(
+        KUTypeDefinition.is_active == True
+    ).order_by(KUTypeDefinition.sort_order).all()
+    
+    ku_type_list = "\n".join([
+        f"- {kt.type_code}: {kt.display_name} ({kt.description or ''})"
+        for kt in ku_types
+    ])
+    
+    # Build classification prompt
+    classification_prompt = f"""分析以下文件内容，判断其类型和分类。
+
+文件名: {body.filename}
+MIME类型: {body.mime_type or '未知'}
+
+内容摘要（前2000字符）:
+{body.content[:2000]}
+
+可选的知识单元类型：
+{ku_type_list}
+
+请分析文件内容，返回JSON格式的分类建议：
+{{
+  "ku_type_code": "选择最匹配的type_code",
+  "product_id": "识别的产品ID，如AOI8000，没有则为null",
+  "tags": ["标签1", "标签2"],
+  "confidence": 0.85,
+  "reason": "简要说明分类理由"
+}}
+
+只返回JSON，不要其他内容。"""
+
+    # Call LLM
+    try:
+        client = OpenAI(
+            api_key=settings.dashscope_api_key.get_secret_value(),
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+        )
+        
+        response = client.chat.completions.create(
+            model="qwen-turbo",  # Use faster model for classification
+            messages=[
+                {"role": "system", "content": "你是一个文档分类专家，善于分析文档内容并准确分类。"},
+                {"role": "user", "content": classification_prompt}
+            ],
+            temperature=0.3,  # Low temperature for more deterministic output
+            max_tokens=500
+        )
+        
+        result_text = response.choices[0].message.content.strip()
+        
+        # Parse JSON from response
+        # Try to extract JSON if wrapped in code blocks
+        if "```json" in result_text:
+            result_text = result_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in result_text:
+            result_text = result_text.split("```")[1].split("```")[0].strip()
+        
+        result = json.loads(result_text)
+        
+        # Validate ku_type_code exists
+        ku_type = next((kt for kt in ku_types if kt.type_code == result.get("ku_type_code")), None)
+        if not ku_type:
+            # Fallback to default type
+            result["ku_type_code"] = "core.product_feature"
+            ku_type = next((kt for kt in ku_types if kt.type_code == "core.product_feature"), None)
+        
+        return ClassifyResponse(
+            ku_type_code=result.get("ku_type_code", "core.product_feature"),
+            ku_type_name=ku_type.display_name if ku_type else "产品功能说明",
+            product_id=result.get("product_id"),
+            tags=result.get("tags", []),
+            confidence=result.get("confidence", 0.5),
+            reason=result.get("reason", "自动分类")
+        )
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse LLM classification response: {e}")
+        # Return default classification
+        return ClassifyResponse(
+            ku_type_code="core.product_feature",
+            ku_type_name="产品功能说明",
+            product_id=None,
+            tags=[],
+            confidence=0.3,
+            reason="无法解析LLM响应，使用默认分类"
+        )
+    except Exception as e:
+        logger.error(f"Classification failed: {e}")
+        # Return default classification on error
+        return ClassifyResponse(
+            ku_type_code="core.product_feature",
+            ku_type_name="产品功能说明",
+            product_id=None,
+            tags=[],
+            confidence=0.3,
+            reason=f"分类失败: {str(e)}"
+        )
 
 
 @router.post("/draft", response_model=ContributionResponse)

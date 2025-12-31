@@ -73,6 +73,21 @@ export interface SignalRequest {
   query_text?: string
 }
 
+export interface ClassifyRequest {
+  filename: string
+  content: string
+  mime_type?: string
+}
+
+export interface ClassifyResponse {
+  ku_type_code: string
+  ku_type_name: string
+  product_id?: string
+  tags: string[]
+  confidence: number
+  reason: string
+}
+
 export const contributeApi = {
   uploadFile: async (file: File, metadata: {
     title?: string
@@ -158,6 +173,12 @@ export const contributeApi = {
     file_path?: string
   }): Promise<Contribution> => {
     const response = await apiClient.put(`/api/contribute/${contributionId}/supplement`, data)
+    return response.data
+  },
+
+  // Classify material using LLM
+  classify: async (data: ClassifyRequest): Promise<ClassifyResponse> => {
+    const response = await apiClient.post('/api/contribute/classify', data)
     return response.data
   },
 }

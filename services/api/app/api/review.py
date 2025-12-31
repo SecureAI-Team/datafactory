@@ -134,6 +134,130 @@ async def get_review_detail(
     return data
 
 
+@router.get("/{contribution_id}/preview")
+async def get_preview_url(
+    contribution_id: int,
+    admin: User = Depends(require_role("admin", "data_ops")),
+    db: Session = Depends(get_db)
+):
+    """获取文件预览URL（MinIO presigned URL）"""
+    from ..clients.minio_client import get_client as get_minio_client
+    from datetime import timedelta
+    
+    contribution = db.query(Contribution).filter(
+        Contribution.id == contribution_id
+    ).first()
+    
+    if not contribution:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contribution not found"
+        )
+    
+    if not contribution.file_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No file associated with this contribution"
+        )
+    
+    try:
+        minio_client = get_minio_client()
+        # Generate presigned URL valid for 1 hour
+        url = minio_client.presigned_get_object(
+            "uploads",
+            contribution.file_path,
+            expires=timedelta(hours=1)
+        )
+        return {
+            "url": url,
+            "mime_type": contribution.mime_type or "application/octet-stream",
+            "file_name": contribution.file_name
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate preview URL: {str(e)}"
+        )
+
+
+@router.get("/{contribution_id}/content")
+async def get_file_content(
+    contribution_id: int,
+    admin: User = Depends(require_role("admin", "data_ops")),
+    db: Session = Depends(get_db)
+):
+    """获取文件文本内容（仅支持文本类型文件）"""
+    from ..clients.minio_client import get_client as get_minio_client
+    
+    contribution = db.query(Contribution).filter(
+        Contribution.id == contribution_id
+    ).first()
+    
+    if not contribution:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contribution not found"
+        )
+    
+    # For draft KUs, return content_json
+    if contribution.contribution_type == "draft_ku" and contribution.content_json:
+        import json
+        return {
+            "content": json.dumps(contribution.content_json, ensure_ascii=False, indent=2),
+            "mime_type": "application/json",
+            "type": "draft"
+        }
+    
+    if not contribution.file_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No file associated with this contribution"
+        )
+    
+    # Only allow text file types
+    text_types = [
+        "text/plain", "text/markdown", "text/csv",
+        "application/json", "text/html", "text/xml"
+    ]
+    ext_text = [".txt", ".md", ".csv", ".json", ".xml", ".html"]
+    
+    is_text = (
+        contribution.mime_type in text_types or 
+        any(contribution.file_name.lower().endswith(ext) for ext in ext_text)
+    )
+    
+    if not is_text:
+        return {
+            "content": None,
+            "mime_type": contribution.mime_type,
+            "type": "binary",
+            "message": "此文件类型不支持文本预览，请使用预览URL下载查看"
+        }
+    
+    try:
+        minio_client = get_minio_client()
+        response = minio_client.get_object("uploads", contribution.file_path)
+        content = response.read().decode('utf-8', errors='replace')
+        response.close()
+        response.release_conn()
+        
+        # Limit content length for preview
+        max_length = 50000
+        if len(content) > max_length:
+            content = content[:max_length] + "\n\n... (内容过长，已截断)"
+        
+        return {
+            "content": content,
+            "mime_type": contribution.mime_type or "text/plain",
+            "type": "text"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to read file content: {str(e)}"
+        )
+
+
 @router.post("/{contribution_id}/approve")
 async def approve_contribution(
     contribution_id: int,

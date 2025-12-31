@@ -28,5 +28,10 @@ class Settings:
     default_scenario = os.getenv("GATEWAY_SCENARIO_DEFAULT", "sales_qa")
 
     n8n_webhook = os.getenv("N8N_WEBHOOK_URL")
+    
+    # Airflow configuration
+    airflow_url = os.getenv("AIRFLOW_URL", "http://airflow-webserver:8080")
+    airflow_user = os.getenv("AIRFLOW_USER", "airflow")
+    airflow_password = os.getenv("AIRFLOW_PASSWORD", "airflow")
 
 settings = Settings()

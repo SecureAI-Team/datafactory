@@ -515,3 +515,124 @@ async def get_dq_runs(
         "runs": runs_list
     }
 
+
+# ==================== Airflow DAG Trigger ====================
+
+@router.post("/trigger-pipeline")
+async def trigger_pipeline(
+    dag_id: str = "ingest_to_bronze",
+    admin: User = Depends(require_role("admin", "data_ops")),
+):
+    """
+    手动触发 Airflow DAG 处理新材料
+    
+    Available DAGs:
+    - ingest_to_bronze: 导入新文件到 Bronze 层
+    - extract_to_silver: 提取文本到 Silver 层
+    - expand_and_rewrite_to_gold: LLM 扩展到 Gold 层
+    - index_to_opensearch: 索引到 OpenSearch
+    - dq_validate_and_publish: 质量检查并发布
+    """
+    import httpx
+    import base64
+    from ..config import settings
+    
+    # Validate DAG ID
+    valid_dags = [
+        "ingest_to_bronze",
+        "extract_to_silver",
+        "expand_and_rewrite_to_gold",
+        "index_to_opensearch",
+        "dq_validate_and_publish",
+        "extract_params",
+        "merge_duplicates"
+    ]
+    
+    if dag_id not in valid_dags:
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid DAG ID. Valid options: {', '.join(valid_dags)}"
+        )
+    
+    # Build Airflow REST API URL
+    airflow_api_url = f"{settings.airflow_url}/api/v1/dags/{dag_id}/dagRuns"
+    
+    # Create Basic Auth header
+    credentials = f"{settings.airflow_user}:{settings.airflow_password}"
+    auth_header = base64.b64encode(credentials.encode()).decode()
+    
+    headers = {
+        "Authorization": f"Basic {auth_header}",
+        "Content-Type": "application/json"
+    }
+    
+    # Trigger DAG run
+    payload = {
+        "conf": {
+            "triggered_by": admin.username,
+            "triggered_at": datetime.now(timezone.utc).isoformat()
+        }
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                airflow_api_url,
+                headers=headers,
+                json=payload
+            )
+            
+            if response.status_code == 200 or response.status_code == 201:
+                result = response.json()
+                return {
+                    "success": True,
+                    "message": f"DAG '{dag_id}' 已触发",
+                    "dag_run_id": result.get("dag_run_id"),
+                    "execution_date": result.get("execution_date"),
+                    "state": result.get("state")
+                }
+            elif response.status_code == 401:
+                return {
+                    "success": False,
+                    "message": "Airflow 认证失败，请检查配置"
+                }
+            elif response.status_code == 404:
+                return {
+                    "success": False,
+                    "message": f"DAG '{dag_id}' 不存在"
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": f"触发失败: {response.text}"
+                }
+    except httpx.ConnectError:
+        return {
+            "success": False,
+            "message": "无法连接到 Airflow 服务器"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"触发失败: {str(e)}"
+        }
+
+
+@router.get("/pipeline-dags")
+async def get_available_dags(
+    admin: User = Depends(require_role("admin", "data_ops")),
+):
+    """获取可用的 Airflow DAG 列表"""
+    return {
+        "dags": [
+            {"id": "ingest_to_bronze", "name": "导入新材料", "description": "将新上传的文件导入到 Bronze 层"},
+            {"id": "extract_to_silver", "name": "文本提取", "description": "从文档中提取文本内容"},
+            {"id": "expand_and_rewrite_to_gold", "name": "LLM 扩展", "description": "使用 LLM 扩展和改写内容"},
+            {"id": "index_to_opensearch", "name": "索引更新", "description": "更新 OpenSearch 搜索索引"},
+            {"id": "dq_validate_and_publish", "name": "质量检查", "description": "执行质量检查并发布通过的内容"},
+            {"id": "extract_params", "name": "参数提取", "description": "提取产品参数信息"},
+            {"id": "merge_duplicates", "name": "去重合并", "description": "合并重复内容"},
+        ]
+    }
+

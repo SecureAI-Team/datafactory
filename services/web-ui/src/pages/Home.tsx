@@ -501,6 +501,16 @@ interface AttachedFile {
   file: File
   preview?: string  // Data URL for image preview
   isImage: boolean
+  // Classification suggestion
+  classification?: {
+    ku_type_code: string
+    ku_type_name: string
+    product_id?: string
+    tags: string[]
+    confidence: number
+    reason: string
+  }
+  isClassifying?: boolean
 }
 
 // Supported file types
@@ -588,7 +598,7 @@ export default function Home() {
     // Reset input so same file can be selected again
     e.target.value = ''
     
-    processFile(file)
+    void processFile(file)
   }
   
   // Remove attached file
@@ -615,7 +625,7 @@ export default function Home() {
   }
   
   // Process file (shared between file input and drag drop)
-  const processFile = (file: File) => {
+  const processFile = async (file: File) => {
     // Check file type
     const isImage = SUPPORTED_IMAGE_TYPES.includes(file.type)
     const isDoc = SUPPORTED_DOC_TYPES.includes(file.type) || 
@@ -654,10 +664,44 @@ export default function Home() {
       }
       reader.readAsDataURL(file)
     } else {
+      // For documents, set file and start classification
       setAttachedFile({
         file,
         isImage: false,
+        isClassifying: true,
       })
+      
+      // Try to extract text content for classification
+      let textContent = ''
+      try {
+        // For text/markdown files, read content directly
+        if (file.type === 'text/plain' || file.name.endsWith('.md') || file.name.endsWith('.txt')) {
+          textContent = await file.text()
+          textContent = textContent.slice(0, 2000) // First 2000 chars
+        } else {
+          // For other docs, use filename as hint
+          textContent = `文件名: ${file.name}\n文件类型: ${file.type}\n文件大小: ${formatFileSize(file.size)}`
+        }
+        
+        // Call classification API
+        const classification = await contributeApi.classify({
+          filename: file.name,
+          content: textContent,
+          mime_type: file.type,
+        })
+        
+        setAttachedFile(prev => prev ? {
+          ...prev,
+          classification,
+          isClassifying: false,
+        } : null)
+      } catch (error) {
+        console.error('Classification failed:', error)
+        setAttachedFile(prev => prev ? {
+          ...prev,
+          isClassifying: false,
+        } : null)
+      }
     }
   }
   
@@ -681,7 +725,7 @@ export default function Home() {
     
     const file = e.dataTransfer.files?.[0]
     if (file) {
-      processFile(file)
+      void processFile(file)
     }
   }
   
@@ -737,10 +781,15 @@ export default function Home() {
       if (fileToUpload) {
         try {
           setIsUploading(true)
+          // Use classification result if available, otherwise default to field.signal
+          const kuType = fileToUpload.classification?.ku_type_code || 'field.signal'
+          const tags = fileToUpload.classification?.tags || []
           await contributeApi.uploadFile(fileToUpload.file, {
             title: fileToUpload.file.name,
             description: content || `通过对话界面上传`,
-            ku_type_code: 'field.signal',
+            ku_type_code: kuType,
+            product_id: fileToUpload.classification?.product_id,
+            tags: tags,
             conversation_id: conv.conversation_id,
             visibility: 'internal',
           })
@@ -775,10 +824,15 @@ export default function Home() {
       if (fileToUpload) {
         try {
           setIsUploading(true)
+          // Use classification result if available, otherwise default to field.signal
+          const kuType = fileToUpload.classification?.ku_type_code || 'field.signal'
+          const tags = fileToUpload.classification?.tags || []
           await contributeApi.uploadFile(fileToUpload.file, {
             title: fileToUpload.file.name,
             description: content || `通过对话界面上传`,
-            ku_type_code: 'field.signal',
+            ku_type_code: kuType,
+            product_id: fileToUpload.classification?.product_id,
+            tags: tags,
             conversation_id: conversationId,
             visibility: 'internal',
           })
@@ -964,41 +1018,89 @@ export default function Home() {
           
           {/* Attached File Preview - Above Input */}
           {attachedFile && (
-            <div className="mb-3 p-3 bg-dark-800/80 rounded-lg border border-dark-700 flex items-center gap-3 animate-fade-in">
-              {/* Preview */}
-              {attachedFile.isImage && attachedFile.preview ? (
-                <div className="w-16 h-16 rounded-lg overflow-hidden bg-dark-700 shrink-0">
-                  <img 
-                    src={attachedFile.preview} 
-                    alt="Preview" 
-                    className="w-full h-full object-cover"
-                  />
+            <div className="mb-3 p-3 bg-dark-800/80 rounded-lg border border-dark-700 animate-fade-in">
+              <div className="flex items-center gap-3">
+                {/* Preview */}
+                {attachedFile.isImage && attachedFile.preview ? (
+                  <div className="w-16 h-16 rounded-lg overflow-hidden bg-dark-700 shrink-0">
+                    <img 
+                      src={attachedFile.preview} 
+                      alt="Preview" 
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                ) : (
+                  <div className="w-12 h-12 rounded-lg bg-dark-700 flex items-center justify-center shrink-0">
+                    <span className="text-2xl">{getFileIcon(attachedFile.file.name)}</span>
+                  </div>
+                )}
+                
+                {/* File Info */}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-dark-100 truncate">
+                    {attachedFile.file.name}
+                  </p>
+                  <p className="text-xs text-dark-400">
+                    {formatFileSize(attachedFile.file.size)}
+                    {attachedFile.isImage && ' • 图片'}
+                  </p>
                 </div>
-              ) : (
-                <div className="w-12 h-12 rounded-lg bg-dark-700 flex items-center justify-center shrink-0">
-                  <span className="text-2xl">{getFileIcon(attachedFile.file.name)}</span>
+                
+                {/* Remove Button */}
+                <button
+                  onClick={handleRemoveAttachment}
+                  className="p-1.5 rounded-full hover:bg-dark-600 text-dark-400 hover:text-dark-200 transition-colors"
+                  title="移除附件"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              
+              {/* Classification Suggestion */}
+              {attachedFile.isClassifying && (
+                <div className="mt-3 pt-3 border-t border-dark-700 flex items-center gap-2 text-sm text-dark-400">
+                  <Loader2 size={14} className="animate-spin" />
+                  <span>正在智能分类...</span>
                 </div>
               )}
               
-              {/* File Info */}
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-dark-100 truncate">
-                  {attachedFile.file.name}
-                </p>
-                <p className="text-xs text-dark-400">
-                  {formatFileSize(attachedFile.file.size)}
-                  {attachedFile.isImage && ' • 图片'}
-                </p>
-              </div>
-              
-              {/* Remove Button */}
-              <button
-                onClick={handleRemoveAttachment}
-                className="p-1.5 rounded-full hover:bg-dark-600 text-dark-400 hover:text-dark-200 transition-colors"
-                title="移除附件"
-              >
-                <X size={16} />
-              </button>
+              {attachedFile.classification && !attachedFile.isClassifying && (
+                <div className="mt-3 pt-3 border-t border-dark-700">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs text-dark-400">AI 识别:</span>
+                    <span className={clsx(
+                      "px-2 py-0.5 rounded text-xs font-medium",
+                      attachedFile.classification.confidence >= 0.7 
+                        ? "bg-green-500/20 text-green-400"
+                        : attachedFile.classification.confidence >= 0.5
+                        ? "bg-yellow-500/20 text-yellow-400"
+                        : "bg-dark-600 text-dark-300"
+                    )}>
+                      {attachedFile.classification.ku_type_name}
+                    </span>
+                    {attachedFile.classification.product_id && (
+                      <span className="px-2 py-0.5 rounded text-xs bg-primary-500/20 text-primary-400">
+                        {attachedFile.classification.product_id}
+                      </span>
+                    )}
+                    <span className="text-xs text-dark-500 ml-auto">
+                      置信度 {Math.round(attachedFile.classification.confidence * 100)}%
+                    </span>
+                  </div>
+                  {attachedFile.classification.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {attachedFile.classification.tags.slice(0, 5).map((tag, i) => (
+                        <span key={i} className="px-1.5 py-0.5 rounded text-xs bg-dark-700 text-dark-300">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-xs text-dark-500 mt-1 italic">
+                    {attachedFile.classification.reason}
+                  </p>
+                </div>
+              )}
             </div>
           )}
           

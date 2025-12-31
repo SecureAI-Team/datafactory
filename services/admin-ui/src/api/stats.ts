@@ -127,6 +127,27 @@ export const statsApi = {
     const response = await apiClient.get('/api/stats/dq-runs', { params })
     return response.data
   },
+
+  // Airflow DAG trigger
+  triggerPipeline: async (dagId: string): Promise<{
+    success: boolean
+    message: string
+    dag_run_id?: string
+    execution_date?: string
+    state?: string
+  }> => {
+    const response = await apiClient.post('/api/stats/trigger-pipeline', null, {
+      params: { dag_id: dagId }
+    })
+    return response.data
+  },
+
+  getAvailableDags: async (): Promise<{
+    dags: Array<{ id: string; name: string; description: string }>
+  }> => {
+    const response = await apiClient.get('/api/stats/pipeline-dags')
+    return response.data
+  },
 }
 
 export default statsApi

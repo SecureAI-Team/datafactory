@@ -485,12 +485,31 @@ def main():
         print()
         seed_ku_types(db)
         print()
-        seed_parameters(db)
-        print()
-        seed_calc_rules(db)
-        print()
+        
+        # Try to seed parameters (may fail if table schema is outdated)
+        try:
+            seed_parameters(db)
+            print()
+        except Exception as e:
+            print(f"  ⚠ Skipping parameters: table schema may be outdated")
+            print(f"    Run 'alembic upgrade head' to add missing columns")
+            print(f"    Error: {type(e).__name__}")
+            db.rollback()
+            print()
+        
+        # Try to seed calculation rules (may fail if table schema is outdated)
+        try:
+            seed_calc_rules(db)
+            print()
+        except Exception as e:
+            print(f"  ⚠ Skipping calculation rules: table schema may be outdated")
+            print(f"    Run 'alembic upgrade head' to add missing columns")
+            print(f"    Error: {type(e).__name__}")
+            db.rollback()
+            print()
+        
         print("=" * 60)
-        print("Seeding completed successfully!")
+        print("Seeding completed!")
         print("=" * 60)
     except Exception as e:
         print(f"Error during seeding: {e}")

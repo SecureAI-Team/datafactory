@@ -7,3 +7,8 @@ client = Minio(
     secret_key=settings.minio_pass,
     secure=settings.minio_url.startswith("https"),
 )
+
+
+def get_client() -> Minio:
+    """Get MinIO client instance"""
+    return client

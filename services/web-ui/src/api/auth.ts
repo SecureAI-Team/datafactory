@@ -1,12 +1,29 @@
 import apiClient from './client'
 import { User } from '../store/authStore'
 
-interface LoginRequest {
+export interface LoginRequest {
   username: string
   password: string
 }
 
-interface LoginResponse {
+export interface RegisterRequest {
+  username: string
+  email: string
+  password: string
+  display_name?: string
+}
+
+export interface UserProfile {
+  id: number
+  username: string
+  email: string
+  display_name?: string
+  role: string
+  department?: string
+  avatar_url?: string
+}
+
+export interface AuthResponse {
   access_token: string
   refresh_token: string
   token_type: string
@@ -20,8 +37,8 @@ interface RefreshResponse {
 }
 
 export const authApi = {
-  login: async (data: LoginRequest): Promise<LoginResponse> => {
-    const response = await apiClient.post<LoginResponse>('/api/auth/login', data)
+  login: async (data: LoginRequest): Promise<AuthResponse> => {
+    const response = await apiClient.post<AuthResponse>('/api/auth/login', data)
     return response.data
   },
   
@@ -48,4 +65,5 @@ export const authApi = {
     })
   },
 }
+
 

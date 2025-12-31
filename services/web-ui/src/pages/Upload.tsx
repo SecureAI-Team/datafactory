@@ -34,18 +34,19 @@ const kuTypeOptions = [
   { value: 'support.troubleshooting', label: '故障排查', category: 'delivery' },
 ]
 
-const allowedTypes = [
-  'application/pdf',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.ms-powerpoint',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'text/plain',
-  'text/markdown',
-  'text/csv',
-]
+// Allowed MIME types for file upload - used in dropzone accept config
+const ALLOWED_MIME_TYPES = {
+  'application/pdf': ['.pdf'],
+  'application/msword': ['.doc'],
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+  'application/vnd.ms-powerpoint': ['.ppt'],
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx'],
+  'application/vnd.ms-excel': ['.xls'],
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+  'text/plain': ['.txt'],
+  'text/markdown': ['.md'],
+  'text/csv': ['.csv'],
+}
 
 export default function Upload() {
   const navigate = useNavigate()
@@ -74,17 +75,17 @@ export default function Upload() {
     setFiles(prev => [...prev, ...newFiles])
     
     // Upload each file
-    acceptedFiles.forEach((file, index) => {
+    acceptedFiles.forEach((file) => {
       uploadMutation.mutate(file, {
         onSuccess: () => {
-          setFiles(prev => prev.map((f, i) => 
+          setFiles(prev => prev.map(f => 
             f.file === file 
               ? { ...f, progress: 100, status: 'success' } 
               : f
           ))
         },
         onError: (error) => {
-          setFiles(prev => prev.map((f, i) => 
+          setFiles(prev => prev.map(f => 
             f.file === file 
               ? { ...f, status: 'error', error: (error as Error).message } 
               : f
@@ -96,18 +97,7 @@ export default function Upload() {
   
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: {
-      'application/pdf': ['.pdf'],
-      'application/msword': ['.doc'],
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
-      'application/vnd.ms-powerpoint': ['.ppt'],
-      'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx'],
-      'application/vnd.ms-excel': ['.xls'],
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
-      'text/plain': ['.txt'],
-      'text/markdown': ['.md'],
-      'text/csv': ['.csv'],
-    },
+    accept: ALLOWED_MIME_TYPES,
     maxSize: 50 * 1024 * 1024, // 50MB
   })
   

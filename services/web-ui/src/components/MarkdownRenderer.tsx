@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, memo } from 'react'
-import ReactMarkdown from 'react-markdown'
+import { useState, useEffect, useRef, memo, ReactNode } from 'react'
+import ReactMarkdown, { Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
@@ -129,69 +129,16 @@ const CodeBlock = memo(({
 
 CodeBlock.displayName = 'CodeBlock'
 
-// Enhanced table component
-const Table = ({ children }: { children: React.ReactNode }) => (
-  <div className="table-wrapper">
-    <table className="enhanced-table">
-      {children}
-    </table>
-  </div>
-)
-
-// Table header
-const TableHead = ({ children }: { children: React.ReactNode }) => (
-  <thead className="enhanced-table-head">
-    {children}
-  </thead>
-)
-
-// Table row
-const TableRow = ({ children }: { children: React.ReactNode }) => (
-  <tr className="enhanced-table-row">
-    {children}
-  </tr>
-)
-
-// Table header cell
-const TableHeaderCell = ({ children }: { children: React.ReactNode }) => (
-  <th className="enhanced-table-th">
-    {children}
-  </th>
-)
-
-// Table data cell
-const TableDataCell = ({ children }: { children: React.ReactNode }) => (
-  <td className="enhanced-table-td">
-    {children}
-  </td>
-)
-
-// Collapsible list for outlines
-const CollapsibleList = ({ 
-  ordered, 
-  children 
-}: { 
-  ordered: boolean
-  children: React.ReactNode 
-}) => {
-  const Tag = ordered ? 'ol' : 'ul'
-  return (
-    <Tag className={clsx('enhanced-list', ordered ? 'enhanced-list-ordered' : 'enhanced-list-unordered')}>
-      {children}
-    </Tag>
-  )
-}
-
 // List item with optional expand/collapse for nested items
-const ListItem = ({ children }: { children: React.ReactNode }) => {
+const ListItem = ({ children }: { children?: ReactNode }) => {
   const [isCollapsed, setIsCollapsed] = useState(false)
-  const hasNestedList = Array.isArray(children) && 
-    children.some((child: unknown) => 
-      typeof child === 'object' && 
-      child !== null && 
-      'type' in child &&
-      (child.type === 'ul' || child.type === 'ol')
-    )
+  const childArray = Array.isArray(children) ? children : [children]
+  const hasNestedList = childArray.some((child: unknown) => 
+    typeof child === 'object' && 
+    child !== null && 
+    'type' in child &&
+    (child.type === 'ul' || child.type === 'ol')
+  )
 
   return (
     <li className="enhanced-list-item">
@@ -210,58 +157,92 @@ const ListItem = ({ children }: { children: React.ReactNode }) => {
   )
 }
 
-// Blockquote for citations and notes
-const Blockquote = ({ children }: { children: React.ReactNode }) => (
-  <blockquote className="enhanced-blockquote">
-    {children}
-  </blockquote>
-)
-
-// Inline code
-const InlineCode = ({ children }: { children: React.ReactNode }) => (
-  <code className="enhanced-inline-code">{children}</code>
-)
-
-// Strong/bold text with accent
-const Strong = ({ children }: { children: React.ReactNode }) => (
-  <strong className="enhanced-strong">{children}</strong>
-)
-
-// Heading components
-const Heading1 = ({ children }: { children: React.ReactNode }) => (
-  <h1 className="enhanced-h1">{children}</h1>
-)
-
-const Heading2 = ({ children }: { children: React.ReactNode }) => (
-  <h2 className="enhanced-h2">{children}</h2>
-)
-
-const Heading3 = ({ children }: { children: React.ReactNode }) => (
-  <h3 className="enhanced-h3">{children}</h3>
-)
-
-// Paragraph with better spacing
-const Paragraph = ({ children }: { children: React.ReactNode }) => (
-  <p className="enhanced-paragraph">{children}</p>
-)
-
-// Horizontal rule
-const HorizontalRule = () => (
-  <hr className="enhanced-hr" />
-)
-
-// Link with external indicator
-const Link = ({ href, children }: { href?: string; children: React.ReactNode }) => (
-  <a 
-    href={href} 
-    className="enhanced-link"
-    target={href?.startsWith('http') ? '_blank' : undefined}
-    rel={href?.startsWith('http') ? 'noopener noreferrer' : undefined}
-  >
-    {children}
-    {href?.startsWith('http') && <span className="external-link-icon">↗</span>}
-  </a>
-)
+// Custom components for ReactMarkdown
+const components: Components = {
+  // Code blocks and inline code
+  code({ className, children, ...props }) {
+    const match = /language-(\w+)/.exec(className || '')
+    const language = match ? match[1] : undefined
+    const content = String(children)
+    
+    // Check if it's a code block (has language or multiple lines)
+    if (language || content.includes('\n')) {
+      return <CodeBlock language={language}>{content}</CodeBlock>
+    }
+    
+    // Inline code
+    return <code className="enhanced-inline-code" {...props}>{children}</code>
+  },
+  
+  // Tables
+  table({ children }) {
+    return (
+      <div className="table-wrapper">
+        <table className="enhanced-table">{children}</table>
+      </div>
+    )
+  },
+  thead({ children }) {
+    return <thead className="enhanced-table-head">{children}</thead>
+  },
+  tr({ children }) {
+    return <tr className="enhanced-table-row">{children}</tr>
+  },
+  th({ children }) {
+    return <th className="enhanced-table-th">{children}</th>
+  },
+  td({ children }) {
+    return <td className="enhanced-table-td">{children}</td>
+  },
+  
+  // Lists
+  ul({ children }) {
+    return <ul className="enhanced-list enhanced-list-unordered">{children}</ul>
+  },
+  ol({ children }) {
+    return <ol className="enhanced-list enhanced-list-ordered">{children}</ol>
+  },
+  li({ children }) {
+    return <ListItem>{children}</ListItem>
+  },
+  
+  // Other elements
+  blockquote({ children }) {
+    return <blockquote className="enhanced-blockquote">{children}</blockquote>
+  },
+  strong({ children }) {
+    return <strong className="enhanced-strong">{children}</strong>
+  },
+  h1({ children }) {
+    return <h1 className="enhanced-h1">{children}</h1>
+  },
+  h2({ children }) {
+    return <h2 className="enhanced-h2">{children}</h2>
+  },
+  h3({ children }) {
+    return <h3 className="enhanced-h3">{children}</h3>
+  },
+  p({ children }) {
+    return <p className="enhanced-paragraph">{children}</p>
+  },
+  hr() {
+    return <hr className="enhanced-hr" />
+  },
+  a({ href, children }) {
+    const isExternal = href?.startsWith('http')
+    return (
+      <a 
+        href={href} 
+        className="enhanced-link"
+        target={isExternal ? '_blank' : undefined}
+        rel={isExternal ? 'noopener noreferrer' : undefined}
+      >
+        {children}
+        {isExternal && <span className="external-link-icon">↗</span>}
+      </a>
+    )
+  },
+}
 
 // Main MarkdownRenderer component
 export default function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
@@ -269,42 +250,10 @@ export default function MarkdownRenderer({ content, className }: MarkdownRendere
     <div className={clsx('markdown-renderer', className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        components={{
-          // Code blocks
-          code({ inline, className: codeClassName, children, ...props }) {
-            const match = /language-(\w+)/.exec(codeClassName || '')
-            const language = match ? match[1] : undefined
-            
-            if (!inline && (language || String(children).includes('\n'))) {
-              return <CodeBlock language={language}>{String(children)}</CodeBlock>
-            }
-            
-            return <InlineCode {...props}>{children}</InlineCode>
-          },
-          // Tables
-          table: Table,
-          thead: TableHead,
-          tr: TableRow,
-          th: TableHeaderCell,
-          td: TableDataCell,
-          // Lists
-          ul: ({ children }) => <CollapsibleList ordered={false}>{children}</CollapsibleList>,
-          ol: ({ children }) => <CollapsibleList ordered={true}>{children}</CollapsibleList>,
-          li: ListItem,
-          // Other elements
-          blockquote: Blockquote,
-          strong: Strong,
-          h1: Heading1,
-          h2: Heading2,
-          h3: Heading3,
-          p: Paragraph,
-          hr: HorizontalRule,
-          a: Link,
-        }}
+        components={components}
       >
         {content}
       </ReactMarkdown>
     </div>
   )
 }
-

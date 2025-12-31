@@ -221,7 +221,8 @@ function ContributionPrompt({
 function MessageItem({ message, onFeedback, conversationId, userQuery }: MessageItemProps) {
   const [copied, setCopied] = useState(false)
   const [showContribution, setShowContribution] = useState(true)
-  const [shareDialogOpen, setShareDialogOpen] = useState(false)
+  // Share dialog state - reserved for future use
+  const [, setShareDialogOpen] = useState(false)
   
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content)

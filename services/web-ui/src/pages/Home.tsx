@@ -18,11 +18,11 @@ import {
   PenLine,
   X,
 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
 import { useNavigate as useRouterNavigate } from 'react-router-dom'
 import { conversationsApi } from '../api/conversations'
 import { contributeApi } from '../api/contribute'
 import { useConversationStore, Message } from '../store/conversationStore'
+import MarkdownRenderer from '../components/MarkdownRenderer'
 import clsx from 'clsx'
 
 // Patterns that indicate missing information
@@ -278,9 +278,7 @@ function MessageItem({ message, onFeedback, conversationId, userQuery }: Message
           message.role === 'user' ? 'message-user' : 'message-assistant'
         )}
       >
-        <div className="prose-chat">
-          <ReactMarkdown>{message.content}</ReactMarkdown>
-        </div>
+        <MarkdownRenderer content={message.content} />
         
         {/* Sources */}
         {message.sources && message.sources.length > 0 && (

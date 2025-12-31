@@ -1,13 +1,32 @@
 """Conversation management API endpoints"""
+import logging
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from openai import OpenAI
 
 from ..db import get_db
 from ..services.conversation_service import ConversationService
+from ..services.retrieval import search
+from ..services.intent_recognizer import recognize_intent, get_intent_recognizer, IntentType
 from ..models.user import User
+from ..config import settings
 from .auth import get_current_user, get_current_user_optional
+
+logger = logging.getLogger(__name__)
+
+# Initialize OpenAI client
+_llm_client = None
+
+def get_llm_client():
+    global _llm_client
+    if _llm_client is None:
+        _llm_client = OpenAI(
+            api_key=settings.upstream_llm_key,
+            base_url=settings.upstream_llm_url.replace("/chat/completions", ""),
+        )
+    return _llm_client
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
@@ -278,19 +297,127 @@ async def send_message(
         content=body.content
     )
     
-    # TODO: 调用 RAG 服务获取回答
-    # 这里暂时返回一个占位回答，实际实现需要调用现有的 gateway API
-    assistant_content = f"收到您的问题：{body.content[:50]}...（RAG 回答待集成）"
+    # 调用 RAG 服务获取回答
+    try:
+        rag_result = await _generate_rag_response(
+            query=body.content,
+            conversation_id=conversation_id,
+            scenario_id=conv.scenario_id
+        )
+        assistant_content = rag_result["answer"]
+        sources = rag_result["sources"]
+        model_used = rag_result.get("model", "qwen-max")
+    except Exception as e:
+        logger.error(f"RAG generation error: {e}")
+        assistant_content = f"抱歉，生成回答时遇到问题，请稍后重试。错误信息：{str(e)}"
+        sources = []
+        model_used = "qwen-max"
     
     assistant_message = service.add_message(
         conversation_id=conversation_id,
         role="assistant",
         content=assistant_content,
-        sources=[],
-        model_used="qwen-max"
+        sources=sources,
+        model_used=model_used
     )
     
     return MessageResponse(**assistant_message.to_dict())
+
+
+async def _generate_rag_response(
+    query: str,
+    conversation_id: str,
+    scenario_id: Optional[str] = None
+) -> dict:
+    """
+    Generate RAG response using retrieval and LLM
+    
+    Returns:
+        dict with keys: answer, sources, model
+    """
+    # 1. 意图识别
+    client = get_llm_client()
+    intent_recognizer = get_intent_recognizer(client)
+    
+    try:
+        intent_result = intent_recognizer.recognize(query)
+        logger.info(f"Intent recognized: {intent_result.intent_type}")
+    except Exception as e:
+        logger.warning(f"Intent recognition failed: {e}")
+        intent_result = None
+    
+    # 2. 检索知识
+    try:
+        hits = search(query, top_k=5, intent_result=intent_result)
+        logger.info(f"Retrieved {len(hits)} hits")
+    except Exception as e:
+        logger.error(f"Retrieval error: {e}")
+        hits = []
+    
+    # 3. 构建上下文
+    sources = []
+    context_parts = []
+    
+    for hit in hits[:5]:
+        title = hit.get("title", "未知标题")
+        summary = hit.get("summary", "")
+        body = hit.get("body", "")[:1500]
+        source_file = hit.get("source_file", "")
+        
+        context_parts.append(f"【来源: {source_file}】\n标题: {title}\n摘要: {summary}\n详情: {body}")
+        
+        sources.append({
+            "id": hit.get("id"),
+            "title": title,
+            "type": hit.get("ku_type", "core"),
+            "source_file": source_file,
+            "score": hit.get("score", 0)
+        })
+    
+    # 4. 构建 Prompt
+    if context_parts:
+        context = "\n\n---\n\n".join(context_parts)
+        system_prompt = f"""你是一个专业的知识助手。请基于以下检索到的知识内容回答用户问题。
+
+{context}
+
+回答要求：
+1. 基于上述内容准确回答，不要编造信息
+2. 在适当位置引用来源，格式如【来源: xxx】
+3. 如果检索内容不足以回答问题，请如实说明
+4. 使用专业但易懂的语言"""
+    else:
+        system_prompt = """你是一个专业的知识助手。当前知识库未找到相关内容。
+请告知用户暂无相关资料，并询问是否可以提供更多信息帮助完善知识库。"""
+    
+    # 5. 调用 LLM 生成回答
+    try:
+        response = client.chat.completions.create(
+            model="qwen-max",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": query}
+            ],
+            temperature=0.7,
+            max_tokens=2048
+        )
+        answer = response.choices[0].message.content
+        model = response.model if hasattr(response, 'model') else "qwen-max"
+    except Exception as e:
+        logger.error(f"LLM call failed: {e}")
+        if hits:
+            # 回退：直接返回检索结果摘要
+            summaries = [f"• {h.get('title', '')}: {h.get('summary', '')[:100]}" for h in hits[:3]]
+            answer = f"抱歉，AI 回答生成遇到问题，以下是检索到的相关内容：\n\n" + "\n\n".join(summaries)
+        else:
+            answer = "抱歉，当前无法生成回答，请稍后重试。"
+        model = "fallback"
+    
+    return {
+        "answer": answer,
+        "sources": sources,
+        "model": model
+    }
 
 
 @router.put("/{conversation_id}/messages/{message_id}/feedback")

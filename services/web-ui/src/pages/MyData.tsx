@@ -8,62 +8,21 @@ import {
   XCircle,
   Award,
   BookOpen,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
-import apiClient from '../api/client'
+import { contributeApi, Contribution, ContributionStats } from '../api/contribute'
 import clsx from 'clsx'
 
-interface ContributionStats {
-  total_contributions: number
-  approved_count: number
-  rejected_count: number
-  pending_count: number
-  citation_count: number
-  achievements: string[]
-  streak_days: number
-}
-
-const achievements = [
-  { id: 'case_master', icon: '📋', name: '案例达人', desc: '贡献5个案例', unlocked: true },
-  { id: 'talk_expert', icon: '💬', name: '话术专家', desc: '贡献10条话术', unlocked: true },
-  { id: 'pioneer', icon: '🚀', name: '知识先锋', desc: '首批贡献者', unlocked: true },
-  { id: 'high_cite', icon: '📚', name: '高频引用', desc: '被引用50次', unlocked: false },
-  { id: 'streak_7', icon: '🔥', name: '连续贡献', desc: '连续贡献7天', unlocked: false },
-  { id: 'quality', icon: '⭐', name: '质量之星', desc: '通过率100%', unlocked: false },
-]
-
-const mockContributions = [
-  {
-    id: 1,
-    title: '华为PCB产线案例.pdf',
-    type: 'file_upload',
-    ku_type: '客户案例',
-    product: 'AOI8000',
-    status: 'approved',
-    citation_count: 23,
-    created_at: '2024-01-15',
-  },
-  {
-    id: 2,
-    title: '比亚迪电池检测方案.docx',
-    type: 'file_upload',
-    ku_type: '方案书',
-    product: 'AOI8000',
-    status: 'pending',
-    citation_count: 0,
-    created_at: '2024-01-20',
-  },
-  {
-    id: 3,
-    title: '某客户报价单.xlsx',
-    type: 'file_upload',
-    ku_type: '报价单',
-    product: 'AOI5000',
-    status: 'rejected',
-    citation_count: 0,
-    created_at: '2024-01-18',
-    review_comment: '包含敏感价格信息，请脱敏后重新提交',
-  },
+// Achievement definitions - these could come from API in future
+const achievementDefinitions = [
+  { id: 'case_master', icon: '📋', name: '案例达人', desc: '贡献5个案例' },
+  { id: 'talk_expert', icon: '💬', name: '话术专家', desc: '贡献10条话术' },
+  { id: 'pioneer', icon: '🚀', name: '知识先锋', desc: '首批贡献者' },
+  { id: 'high_cite', icon: '📚', name: '高频引用', desc: '被引用50次' },
+  { id: 'streak_7', icon: '🔥', name: '连续贡献', desc: '连续贡献7天' },
+  { id: 'quality', icon: '⭐', name: '质量之星', desc: '通过率100%' },
 ]
 
 function StatCard({
@@ -71,11 +30,13 @@ function StatCard({
   label,
   value,
   color,
+  loading,
 }: {
   icon: React.ElementType
   label: string
   value: number | string
   color: string
+  loading?: boolean
 }) {
   return (
     <div className="card p-6">
@@ -92,10 +53,106 @@ function StatCard({
           <Icon size={24} />
         </div>
         <div>
-          <p className="text-2xl font-bold">{value}</p>
-          <p className="text-sm text-dark-400">{label}</p>
+          {loading ? (
+            <div className="animate-pulse">
+              <div className="h-6 w-12 bg-dark-700 rounded mb-1"></div>
+              <div className="h-4 w-16 bg-dark-700 rounded"></div>
+            </div>
+          ) : (
+            <>
+              <p className="text-2xl font-bold">{value}</p>
+              <p className="text-sm text-dark-400">{label}</p>
+            </>
+          )}
         </div>
       </div>
+    </div>
+  )
+}
+
+function ContributionItem({ contribution }: { contribution: Contribution }) {
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'approved':
+        return 'bg-green-500/20'
+      case 'pending':
+        return 'bg-yellow-500/20'
+      case 'rejected':
+        return 'bg-red-500/20'
+      default:
+        return 'bg-dark-700'
+    }
+  }
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'approved':
+        return <CheckCircle className="text-green-400" size={20} />
+      case 'pending':
+        return <Clock className="text-yellow-400" size={20} />
+      case 'rejected':
+        return <XCircle className="text-red-400" size={20} />
+      default:
+        return <AlertCircle className="text-dark-400" size={20} />
+    }
+  }
+
+  const formatDate = (dateString: string) => {
+    try {
+      return new Date(dateString).toLocaleDateString('zh-CN')
+    } catch {
+      return dateString
+    }
+  }
+
+  const getKUTypeName = (code: string | undefined) => {
+    const types: Record<string, string> = {
+      'product_spec': '产品规格',
+      'case_study': '客户案例',
+      'solution': '方案书',
+      'quote': '报价单',
+      'talk_track': '话术',
+      'faq': '常见问答',
+    }
+    return code ? types[code] || code : '未分类'
+  }
+
+  return (
+    <div className="card p-4 flex items-center gap-4">
+      {/* Status Icon */}
+      <div
+        className={clsx(
+          'w-10 h-10 rounded-lg flex items-center justify-center',
+          getStatusColor(contribution.status)
+        )}
+      >
+        {getStatusIcon(contribution.status)}
+      </div>
+
+      {/* Info */}
+      <div className="flex-1">
+        <h3 className="font-medium">{contribution.title || contribution.file_name || '未命名贡献'}</h3>
+        <p className="text-sm text-dark-400">
+          类型: {getKUTypeName(contribution.ku_type_code)} | 
+          产品: {contribution.product_id || '未关联'} |{' '}
+          {contribution.status === 'approved'
+            ? `入库于 ${formatDate(contribution.reviewed_at || contribution.updated_at || contribution.created_at)}`
+            : `提交于 ${formatDate(contribution.created_at)}`}
+        </p>
+        {contribution.review_comment && contribution.status === 'rejected' && (
+          <p className="text-sm text-red-400 mt-1">
+            审核意见: {contribution.review_comment}
+          </p>
+        )}
+      </div>
+
+      {/* Citation Count - Note: citation_count may need to come from a different endpoint */}
+      {contribution.status === 'approved' && (
+        <div className="text-right">
+          <p className="text-lg font-bold text-primary-400">-</p>
+          <p className="text-xs text-dark-400">引用待统计</p>
+        </div>
+      )}
     </div>
   )
 }
@@ -103,17 +160,55 @@ function StatCard({
 export default function MyData() {
   const [activeTab, setActiveTab] = useState<'contributions' | 'achievements'>('contributions')
   const { user } = useAuthStore()
-  
-  // Fetch user stats
-  const { data: stats } = useQuery<ContributionStats>({
-    queryKey: ['user-stats', user?.id],
-    queryFn: async () => {
-      const response = await apiClient.get(`/api/users/${user?.id}/stats`)
-      return response.data
-    },
-    enabled: !!user?.id,
+
+  // Fetch contribution stats
+  const { 
+    data: stats, 
+    isLoading: statsLoading,
+    error: statsError 
+  } = useQuery<ContributionStats>({
+    queryKey: ['contribution-stats'],
+    queryFn: contributeApi.getStats,
+    enabled: !!user,
+    staleTime: 30000, // Cache for 30 seconds
   })
-  
+
+  // Fetch user contributions
+  const {
+    data: contributionsData,
+    isLoading: contributionsLoading,
+    error: contributionsError,
+  } = useQuery({
+    queryKey: ['my-contributions'],
+    queryFn: () => contributeApi.getMine({ limit: 50 }),
+    enabled: !!user,
+    staleTime: 30000,
+  })
+
+  const contributions = contributionsData?.contributions || []
+
+  // Compute which achievements are unlocked based on stats
+  const unlockedAchievements = new Set<string>()
+  if (stats) {
+    if (stats.achievements) {
+      stats.achievements.forEach(a => unlockedAchievements.add(a))
+    }
+    // Also check based on stats
+    if (stats.total_contributions >= 1) unlockedAchievements.add('pioneer')
+    if (stats.approved_count >= 5) unlockedAchievements.add('case_master')
+    if (stats.approved_count >= 10) unlockedAchievements.add('talk_expert')
+    if (stats.citation_count >= 50) unlockedAchievements.add('high_cite')
+    if (stats.streak_days >= 7) unlockedAchievements.add('streak_7')
+    if (stats.total_contributions > 0 && stats.approved_count === stats.total_contributions) {
+      unlockedAchievements.add('quality')
+    }
+  }
+
+  const achievementsWithStatus = achievementDefinitions.map(a => ({
+    ...a,
+    unlocked: unlockedAchievements.has(a.id),
+  }))
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-5xl mx-auto p-6">
@@ -128,35 +223,47 @@ export default function MyData() {
             上传材料
           </button>
         </div>
-        
+
+        {/* Error Display */}
+        {statsError && (
+          <div className="mb-4 p-4 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400">
+            <AlertCircle className="inline mr-2" size={18} />
+            统计数据加载失败，请稍后重试
+          </div>
+        )}
+
         {/* Stats Cards */}
         <div className="grid grid-cols-4 gap-4 mb-8">
           <StatCard
             icon={Upload}
             label="总贡献"
-            value={stats?.total_contributions || 15}
+            value={stats?.total_contributions ?? 0}
             color="primary"
+            loading={statsLoading}
           />
           <StatCard
             icon={CheckCircle}
             label="已入库"
-            value={stats?.approved_count || 12}
+            value={stats?.approved_count ?? 0}
             color="green"
+            loading={statsLoading}
           />
           <StatCard
             icon={Clock}
             label="审核中"
-            value={stats?.pending_count || 2}
+            value={stats?.pending_count ?? 0}
             color="yellow"
+            loading={statsLoading}
           />
           <StatCard
             icon={BookOpen}
             label="被引用"
-            value={stats?.citation_count || 89}
+            value={stats?.citation_count ?? 0}
             color="purple"
+            loading={statsLoading}
           />
         </div>
-        
+
         {/* Tabs */}
         <div className="flex gap-4 mb-6">
           <button
@@ -184,70 +291,42 @@ export default function MyData() {
             成就徽章
           </button>
         </div>
-        
+
         {/* Content */}
         {activeTab === 'contributions' ? (
           <div className="space-y-4">
-            {mockContributions.map((contribution) => (
-              <div key={contribution.id} className="card p-4 flex items-center gap-4">
-                {/* Status Icon */}
-                <div
-                  className={clsx(
-                    'w-10 h-10 rounded-lg flex items-center justify-center',
-                    contribution.status === 'approved' && 'bg-green-500/20',
-                    contribution.status === 'pending' && 'bg-yellow-500/20',
-                    contribution.status === 'rejected' && 'bg-red-500/20'
-                  )}
-                >
-                  {contribution.status === 'approved' && (
-                    <CheckCircle className="text-green-400" size={20} />
-                  )}
-                  {contribution.status === 'pending' && (
-                    <Clock className="text-yellow-400" size={20} />
-                  )}
-                  {contribution.status === 'rejected' && (
-                    <XCircle className="text-red-400" size={20} />
-                  )}
-                </div>
-                
-                {/* Info */}
-                <div className="flex-1">
-                  <h3 className="font-medium">{contribution.title}</h3>
-                  <p className="text-sm text-dark-400">
-                    类型: {contribution.ku_type} | 产品: {contribution.product} |{' '}
-                    {contribution.status === 'approved'
-                      ? `入库于 ${contribution.created_at}`
-                      : contribution.status === 'pending'
-                      ? `提交于 ${contribution.created_at}`
-                      : `提交于 ${contribution.created_at}`}
-                  </p>
-                  {contribution.review_comment && (
-                    <p className="text-sm text-red-400 mt-1">
-                      审核意见: {contribution.review_comment}
-                    </p>
-                  )}
-                </div>
-                
-                {/* Citation Count */}
-                {contribution.status === 'approved' && contribution.citation_count > 0 && (
-                  <div className="text-right">
-                    <p className="text-lg font-bold text-primary-400">
-                      {contribution.citation_count}
-                    </p>
-                    <p className="text-xs text-dark-400">被引用</p>
-                  </div>
-                )}
+            {contributionsLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="animate-spin text-primary-400" size={32} />
               </div>
-            ))}
+            ) : contributionsError ? (
+              <div className="p-8 text-center text-dark-400">
+                <AlertCircle className="mx-auto mb-2" size={32} />
+                <p>加载贡献记录失败，请稍后重试</p>
+              </div>
+            ) : contributions.length === 0 ? (
+              <div className="p-8 text-center text-dark-400">
+                <FileText className="mx-auto mb-2 opacity-50" size={48} />
+                <p className="mb-4">您还没有贡献任何资料</p>
+                <button className="btn-primary">
+                  <Upload size={18} />
+                  上传第一份资料
+                </button>
+              </div>
+            ) : (
+              contributions.map((contribution) => (
+                <ContributionItem key={contribution.id} contribution={contribution} />
+              ))
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-3 gap-4">
-            {achievements.map((achievement) => (
+            {achievementsWithStatus.map((achievement) => (
               <div
                 key={achievement.id}
                 className={clsx(
-                  'card p-6 text-center',
-                  !achievement.unlocked && 'opacity-50'
+                  'card p-6 text-center transition-all',
+                  !achievement.unlocked && 'opacity-50 grayscale'
                 )}
               >
                 <div className="text-4xl mb-3">{achievement.icon}</div>
@@ -270,4 +349,3 @@ export default function MyData() {
     </div>
   )
 }
-

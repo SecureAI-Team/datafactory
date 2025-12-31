@@ -10,6 +10,8 @@ import {
   ToolOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  CheckSquareOutlined,
+  LineChartOutlined,
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 
@@ -31,9 +33,19 @@ const menuItems: MenuProps['items'] = [
     label: '贡献审核',
   },
   {
+    key: '/tasks',
+    icon: <CheckSquareOutlined />,
+    label: '任务协作',
+  },
+  {
     key: '/config',
     icon: <ToolOutlined />,
     label: '配置管理',
+  },
+  {
+    key: '/quality',
+    icon: <LineChartOutlined />,
+    label: '质量分析',
   },
   {
     key: '/users',

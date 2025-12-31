@@ -16,6 +16,12 @@ from .api import auth
 from .api import users
 from .api import conversations as conversations_v2
 from .api import settings
+from .api import contribute
+from .api import review
+from .api import stats
+from .api import tasks
+from .api import config
+from .api import llm
 
 app = FastAPI(
     title="AI Data Factory API",
@@ -81,6 +87,24 @@ app.include_router(conversations_v2.router, tags=["conversations-v2"])
 
 # 系统配置 API
 app.include_router(settings.router, tags=["settings"])
+
+# 贡献管理 API
+app.include_router(contribute.router, tags=["contribute"])
+
+# 审核管理 API
+app.include_router(review.router, tags=["review"])
+
+# 统计分析 API
+app.include_router(stats.router, tags=["stats"])
+
+# 任务协作 API
+app.include_router(tasks.router, tags=["tasks"])
+
+# 配置管理 API (场景/Prompt/KU类型)
+app.include_router(config.router, tags=["config"])
+
+# LLM 配置 API (提供商/模型/分配)
+app.include_router(llm.router, tags=["llm-config"])
 
 @app.get("/health")
 def health():

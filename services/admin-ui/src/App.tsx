@@ -6,6 +6,8 @@ import Review from './pages/Review'
 import Config from './pages/Config'
 import Users from './pages/Users'
 import Settings from './pages/Settings'
+import Tasks from './pages/Tasks'
+import Quality from './pages/Quality'
 import Login from './pages/Login'
 
 function App() {
@@ -35,6 +37,8 @@ function App() {
           <Route index element={<Dashboard />} />
           <Route path="review" element={<Review />} />
           <Route path="config" element={<Config />} />
+          <Route path="tasks" element={<Tasks />} />
+          <Route path="quality" element={<Quality />} />
           <Route path="users" element={<Users />} />
           <Route path="settings/*" element={<Settings />} />
         </Route>

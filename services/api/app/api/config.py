@@ -1,0 +1,642 @@
+"""Configuration management API endpoints - Scenarios, Prompts, KU Types"""
+from datetime import datetime, timezone
+from typing import Optional, List
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from sqlalchemy import desc
+
+from ..db import get_db
+from ..models.user import User
+from ..models.config import ScenarioConfig, PromptTemplate, PromptHistory, KUTypeDefinition
+from .auth import get_current_user, require_role
+
+router = APIRouter(prefix="/api/config", tags=["config"])
+
+
+# ==================== Scenario Models ====================
+
+class ScenarioCreateRequest(BaseModel):
+    scenario_id: str
+    name: str
+    description: Optional[str] = None
+    icon: Optional[str] = None
+    intent_patterns: Optional[List[dict]] = []
+    retrieval_config: Optional[dict] = {}
+    response_template: Optional[str] = None
+    quick_commands: Optional[List[dict]] = []
+    is_active: bool = True
+    sort_order: int = 0
+
+
+class ScenarioUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    icon: Optional[str] = None
+    intent_patterns: Optional[List[dict]] = None
+    retrieval_config: Optional[dict] = None
+    response_template: Optional[str] = None
+    quick_commands: Optional[List[dict]] = None
+    is_active: Optional[bool] = None
+    sort_order: Optional[int] = None
+
+
+# ==================== Prompt Models ====================
+
+class PromptCreateRequest(BaseModel):
+    name: str
+    type: str  # system/user/intent/response/summary
+    scenario_id: Optional[str] = None
+    template: str
+    variables: Optional[List[dict]] = []
+    is_active: bool = True
+
+
+class PromptUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    type: Optional[str] = None
+    scenario_id: Optional[str] = None
+    template: Optional[str] = None
+    variables: Optional[List[dict]] = None
+    is_active: Optional[bool] = None
+    change_reason: Optional[str] = None
+
+
+class PromptRevertRequest(BaseModel):
+    version: int
+
+
+# ==================== KU Type Models ====================
+
+class KUTypeCreateRequest(BaseModel):
+    type_code: str
+    category: str
+    display_name: str
+    description: Optional[str] = None
+    merge_strategy: str = "independent"
+    requires_expiry: bool = False
+    requires_approval: bool = True
+    visibility_default: str = "internal"
+    icon: Optional[str] = None
+    sort_order: int = 0
+
+
+class KUTypeUpdateRequest(BaseModel):
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    merge_strategy: Optional[str] = None
+    requires_expiry: Optional[bool] = None
+    requires_approval: Optional[bool] = None
+    visibility_default: Optional[str] = None
+    icon: Optional[str] = None
+    sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+# ==================== Scenario Endpoints ====================
+
+@router.get("/scenarios")
+async def list_scenarios(
+    active_only: bool = False,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取场景列表"""
+    query = db.query(ScenarioConfig)
+    
+    if active_only:
+        query = query.filter(ScenarioConfig.is_active == True)
+    
+    scenarios = query.order_by(ScenarioConfig.sort_order).all()
+    
+    return {"scenarios": [s.to_dict() for s in scenarios]}
+
+
+@router.get("/scenarios/{scenario_id}")
+async def get_scenario(
+    scenario_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取场景详情"""
+    scenario = db.query(ScenarioConfig).filter(
+        ScenarioConfig.scenario_id == scenario_id
+    ).first()
+    
+    if not scenario:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scenario not found"
+        )
+    
+    return scenario.to_dict()
+
+
+@router.post("/scenarios")
+async def create_scenario(
+    body: ScenarioCreateRequest,
+    admin: User = Depends(require_role("admin", "data_ops")),
+    db: Session = Depends(get_db)
+):
+    """创建场景"""
+    # Check if scenario_id already exists
+    existing = db.query(ScenarioConfig).filter(
+        ScenarioConfig.scenario_id == body.scenario_id
+    ).first()
+    
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Scenario '{body.scenario_id}' already exists"
+        )
+    
+    scenario = ScenarioConfig(
+        scenario_id=body.scenario_id,
+        name=body.name,
+        description=body.description,
+        icon=body.icon,
+        intent_patterns=body.intent_patterns,
+        retrieval_config=body.retrieval_config,
+        response_template=body.response_template,
+        quick_commands=body.quick_commands,
+        is_active=body.is_active,
+        sort_order=body.sort_order,
+        created_by=admin.id
+    )
+    
+    db.add(scenario)
+    db.commit()
+    db.refresh(scenario)
+    
+    return {"message": "Scenario created", "scenario": scenario.to_dict()}
+
+
+@router.put("/scenarios/{scenario_id}")
+async def update_scenario(
+    scenario_id: str,
+    body: ScenarioUpdateRequest,
+    admin: User = Depends(require_role("admin", "data_ops")),
+    db: Session = Depends(get_db)
+):
+    """更新场景"""
+    scenario = db.query(ScenarioConfig).filter(
+        ScenarioConfig.scenario_id == scenario_id
+    ).first()
+    
+    if not scenario:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scenario not found"
+        )
+    
+    if body.name is not None:
+        scenario.name = body.name
+    if body.description is not None:
+        scenario.description = body.description
+    if body.icon is not None:
+        scenario.icon = body.icon
+    if body.intent_patterns is not None:
+        scenario.intent_patterns = body.intent_patterns
+    if body.retrieval_config is not None:
+        scenario.retrieval_config = body.retrieval_config
+    if body.response_template is not None:
+        scenario.response_template = body.response_template
+    if body.quick_commands is not None:
+        scenario.quick_commands = body.quick_commands
+    if body.is_active is not None:
+        scenario.is_active = body.is_active
+    if body.sort_order is not None:
+        scenario.sort_order = body.sort_order
+    
+    scenario.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(scenario)
+    
+    return {"message": "Scenario updated", "scenario": scenario.to_dict()}
+
+
+@router.delete("/scenarios/{scenario_id}")
+async def delete_scenario(
+    scenario_id: str,
+    admin: User = Depends(require_role("admin")),
+    db: Session = Depends(get_db)
+):
+    """删除场景"""
+    scenario = db.query(ScenarioConfig).filter(
+        ScenarioConfig.scenario_id == scenario_id
+    ).first()
+    
+    if not scenario:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scenario not found"
+        )
+    
+    db.delete(scenario)
+    db.commit()
+    
+    return {"message": "Scenario deleted", "scenario_id": scenario_id}
+
+
+# ==================== Prompt Endpoints ====================
+
+@router.get("/prompts")
+async def list_prompts(
+    type_filter: Optional[str] = None,
+    scenario_id: Optional[str] = None,
+    active_only: bool = False,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取 Prompt 列表"""
+    query = db.query(PromptTemplate)
+    
+    if type_filter:
+        query = query.filter(PromptTemplate.type == type_filter)
+    
+    if scenario_id:
+        query = query.filter(PromptTemplate.scenario_id == scenario_id)
+    
+    if active_only:
+        query = query.filter(PromptTemplate.is_active == True)
+    
+    prompts = query.order_by(PromptTemplate.name).all()
+    
+    return {"prompts": [p.to_dict() for p in prompts]}
+
+
+@router.get("/prompts/{prompt_id}")
+async def get_prompt(
+    prompt_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取 Prompt 详情"""
+    prompt = db.query(PromptTemplate).filter(
+        PromptTemplate.id == prompt_id
+    ).first()
+    
+    if not prompt:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Prompt not found"
+        )
+    
+    return prompt.to_dict()
+
+
+@router.post("/prompts")
+async def create_prompt(
+    body: PromptCreateRequest,
+    admin: User = Depends(require_role("admin", "data_ops")),
+    db: Session = Depends(get_db)
+):
+    """创建 Prompt"""
+    valid_types = ["system", "user", "intent", "response", "summary"]
+    if body.type not in valid_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid type. Must be one of: {valid_types}"
+        )
+    
+    prompt = PromptTemplate(
+        name=body.name,
+        type=body.type,
+        scenario_id=body.scenario_id,
+        template=body.template,
+        variables=body.variables,
+        version=1,
+        is_active=body.is_active,
+        created_by=admin.id
+    )
+    
+    db.add(prompt)
+    db.commit()
+    db.refresh(prompt)
+    
+    return {"message": "Prompt created", "prompt": prompt.to_dict()}
+
+
+@router.put("/prompts/{prompt_id}")
+async def update_prompt(
+    prompt_id: int,
+    body: PromptUpdateRequest,
+    admin: User = Depends(require_role("admin", "data_ops")),
+    db: Session = Depends(get_db)
+):
+    """更新 Prompt（自动保存历史版本）"""
+    prompt = db.query(PromptTemplate).filter(
+        PromptTemplate.id == prompt_id
+    ).first()
+    
+    if not prompt:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Prompt not found"
+        )
+    
+    # Save history before update if template is changing
+    if body.template is not None and body.template != prompt.template:
+        history = PromptHistory(
+            prompt_id=prompt.id,
+            version=prompt.version,
+            template=prompt.template,
+            changed_by=admin.id,
+            change_reason=body.change_reason
+        )
+        db.add(history)
+        prompt.version += 1
+    
+    if body.name is not None:
+        prompt.name = body.name
+    if body.type is not None:
+        valid_types = ["system", "user", "intent", "response", "summary"]
+        if body.type not in valid_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid type. Must be one of: {valid_types}"
+            )
+        prompt.type = body.type
+    if body.scenario_id is not None:
+        prompt.scenario_id = body.scenario_id
+    if body.template is not None:
+        prompt.template = body.template
+    if body.variables is not None:
+        prompt.variables = body.variables
+    if body.is_active is not None:
+        prompt.is_active = body.is_active
+    
+    prompt.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(prompt)
+    
+    return {"message": "Prompt updated", "prompt": prompt.to_dict()}
+
+
+@router.get("/prompts/{prompt_id}/history")
+async def get_prompt_history(
+    prompt_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取 Prompt 历史版本"""
+    prompt = db.query(PromptTemplate).filter(
+        PromptTemplate.id == prompt_id
+    ).first()
+    
+    if not prompt:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Prompt not found"
+        )
+    
+    history = db.query(PromptHistory).filter(
+        PromptHistory.prompt_id == prompt_id
+    ).order_by(desc(PromptHistory.version)).all()
+    
+    return {
+        "current_version": prompt.version,
+        "history": [
+            {
+                "id": h.id,
+                "version": h.version,
+                "template": h.template,
+                "changed_by": h.changed_by,
+                "change_reason": h.change_reason,
+                "created_at": h.created_at.isoformat() if h.created_at else None
+            }
+            for h in history
+        ]
+    }
+
+
+@router.post("/prompts/{prompt_id}/revert")
+async def revert_prompt(
+    prompt_id: int,
+    body: PromptRevertRequest,
+    admin: User = Depends(require_role("admin", "data_ops")),
+    db: Session = Depends(get_db)
+):
+    """回滚到指定版本"""
+    prompt = db.query(PromptTemplate).filter(
+        PromptTemplate.id == prompt_id
+    ).first()
+    
+    if not prompt:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Prompt not found"
+        )
+    
+    # Find the target version in history
+    target = db.query(PromptHistory).filter(
+        PromptHistory.prompt_id == prompt_id,
+        PromptHistory.version == body.version
+    ).first()
+    
+    if not target:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Version {body.version} not found"
+        )
+    
+    # Save current version to history
+    history = PromptHistory(
+        prompt_id=prompt.id,
+        version=prompt.version,
+        template=prompt.template,
+        changed_by=admin.id,
+        change_reason=f"Reverted to version {body.version}"
+    )
+    db.add(history)
+    
+    # Apply the reverted template
+    prompt.template = target.template
+    prompt.version += 1
+    prompt.updated_at = datetime.now(timezone.utc)
+    
+    db.commit()
+    db.refresh(prompt)
+    
+    return {"message": f"Reverted to version {body.version}", "prompt": prompt.to_dict()}
+
+
+@router.delete("/prompts/{prompt_id}")
+async def delete_prompt(
+    prompt_id: int,
+    admin: User = Depends(require_role("admin")),
+    db: Session = Depends(get_db)
+):
+    """删除 Prompt"""
+    prompt = db.query(PromptTemplate).filter(
+        PromptTemplate.id == prompt_id
+    ).first()
+    
+    if not prompt:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Prompt not found"
+        )
+    
+    db.delete(prompt)
+    db.commit()
+    
+    return {"message": "Prompt deleted", "prompt_id": prompt_id}
+
+
+# ==================== KU Type Endpoints ====================
+
+@router.get("/ku-types")
+async def list_ku_types(
+    category: Optional[str] = None,
+    active_only: bool = False,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取 KU 类型列表"""
+    query = db.query(KUTypeDefinition)
+    
+    if category:
+        query = query.filter(KUTypeDefinition.category == category)
+    
+    if active_only:
+        query = query.filter(KUTypeDefinition.is_active == True)
+    
+    ku_types = query.order_by(
+        KUTypeDefinition.category,
+        KUTypeDefinition.sort_order
+    ).all()
+    
+    return {"ku_types": [t.to_dict() for t in ku_types]}
+
+
+@router.get("/ku-types/{type_code}")
+async def get_ku_type(
+    type_code: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取 KU 类型详情"""
+    ku_type = db.query(KUTypeDefinition).filter(
+        KUTypeDefinition.type_code == type_code
+    ).first()
+    
+    if not ku_type:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="KU type not found"
+        )
+    
+    return ku_type.to_dict()
+
+
+@router.post("/ku-types")
+async def create_ku_type(
+    body: KUTypeCreateRequest,
+    admin: User = Depends(require_role("admin")),
+    db: Session = Depends(get_db)
+):
+    """创建 KU 类型"""
+    existing = db.query(KUTypeDefinition).filter(
+        KUTypeDefinition.type_code == body.type_code
+    ).first()
+    
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"KU type '{body.type_code}' already exists"
+        )
+    
+    valid_categories = ["product", "solution", "case", "quote", "biz", "delivery", "field", "sales"]
+    if body.category not in valid_categories:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid category. Must be one of: {valid_categories}"
+        )
+    
+    ku_type = KUTypeDefinition(
+        type_code=body.type_code,
+        category=body.category,
+        display_name=body.display_name,
+        description=body.description,
+        merge_strategy=body.merge_strategy,
+        requires_expiry=body.requires_expiry,
+        requires_approval=body.requires_approval,
+        visibility_default=body.visibility_default,
+        icon=body.icon,
+        sort_order=body.sort_order
+    )
+    
+    db.add(ku_type)
+    db.commit()
+    db.refresh(ku_type)
+    
+    return {"message": "KU type created", "ku_type": ku_type.to_dict()}
+
+
+@router.put("/ku-types/{type_code}")
+async def update_ku_type(
+    type_code: str,
+    body: KUTypeUpdateRequest,
+    admin: User = Depends(require_role("admin")),
+    db: Session = Depends(get_db)
+):
+    """更新 KU 类型"""
+    ku_type = db.query(KUTypeDefinition).filter(
+        KUTypeDefinition.type_code == type_code
+    ).first()
+    
+    if not ku_type:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="KU type not found"
+        )
+    
+    if body.display_name is not None:
+        ku_type.display_name = body.display_name
+    if body.description is not None:
+        ku_type.description = body.description
+    if body.merge_strategy is not None:
+        ku_type.merge_strategy = body.merge_strategy
+    if body.requires_expiry is not None:
+        ku_type.requires_expiry = body.requires_expiry
+    if body.requires_approval is not None:
+        ku_type.requires_approval = body.requires_approval
+    if body.visibility_default is not None:
+        ku_type.visibility_default = body.visibility_default
+    if body.icon is not None:
+        ku_type.icon = body.icon
+    if body.sort_order is not None:
+        ku_type.sort_order = body.sort_order
+    if body.is_active is not None:
+        ku_type.is_active = body.is_active
+    
+    db.commit()
+    db.refresh(ku_type)
+    
+    return {"message": "KU type updated", "ku_type": ku_type.to_dict()}
+
+
+@router.delete("/ku-types/{type_code}")
+async def delete_ku_type(
+    type_code: str,
+    admin: User = Depends(require_role("admin")),
+    db: Session = Depends(get_db)
+):
+    """删除 KU 类型（软删除，设为不活跃）"""
+    ku_type = db.query(KUTypeDefinition).filter(
+        KUTypeDefinition.type_code == type_code
+    ).first()
+    
+    if not ku_type:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="KU type not found"
+        )
+    
+    # Soft delete - just mark as inactive
+    ku_type.is_active = False
+    db.commit()
+    
+    return {"message": "KU type deactivated", "type_code": type_code}
+

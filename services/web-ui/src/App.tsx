@@ -6,6 +6,7 @@ import Login from './pages/Login'
 import MyData from './pages/MyData'
 import Settings from './pages/Settings'
 import SharedChat from './pages/SharedChat'
+import Upload from './pages/Upload'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated)
@@ -37,6 +38,7 @@ function App() {
           <Route index element={<Home />} />
           <Route path="c/:conversationId" element={<Home />} />
           <Route path="my" element={<MyData />} />
+          <Route path="upload" element={<Upload />} />
           <Route path="settings" element={<Settings />} />
         </Route>
         

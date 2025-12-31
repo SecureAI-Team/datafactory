@@ -1,16 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Card, Table, Tag, Button, Space, Modal, Form, Input, Select, message, Typography, Avatar } from 'antd'
-import { PlusOutlined, EditOutlined, StopOutlined, UserOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, StopOutlined, UserOutlined, CheckCircleOutlined } from '@ant-design/icons'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { usersApi, User } from '../api'
 
 const { Title } = Typography
-
-// Mock data
-const mockUsers = [
-  { id: 1, username: 'admin', email: 'admin@example.com', display_name: '系统管理员', role: 'admin', department: 'IT', is_active: true, last_login_at: '2024-01-20 10:30' },
-  { id: 2, username: 'zhangsan', email: 'zhangsan@example.com', display_name: '张三', role: 'bd_sales', department: '销售部', is_active: true, last_login_at: '2024-01-20 14:15' },
-  { id: 3, username: 'lisi', email: 'lisi@example.com', display_name: '李四', role: 'data_ops', department: '数据运维', is_active: true, last_login_at: '2024-01-19 16:45' },
-  { id: 4, username: 'wangwu', email: 'wangwu@example.com', display_name: '王五', role: 'bd_sales', department: '销售部', is_active: false, last_login_at: '2024-01-10 09:00' },
-]
 
 const roleColors: Record<string, string> = {
   admin: 'red',
@@ -27,43 +21,101 @@ const roleNames: Record<string, string> = {
 }
 
 export default function Users() {
+  const queryClient = useQueryClient()
   const [createModal, setCreateModal] = useState(false)
-  const [editModal, setEditModal] = useState<{ visible: boolean; user: typeof mockUsers[0] | null }>({
+  const [editModal, setEditModal] = useState<{ visible: boolean; user: User | null }>({
     visible: false,
     user: null,
   })
-  const [form] = Form.useForm()
+  const [createForm] = Form.useForm()
+  const [editForm] = Form.useForm()
   
-  const handleCreate = () => {
-    form.validateFields().then(() => {
+  // Fetch users
+  const { data, isLoading } = useQuery({
+    queryKey: ['users'],
+    queryFn: () => usersApi.list({ limit: 100 }),
+  })
+  
+  // Create user mutation
+  const createMutation = useMutation({
+    mutationFn: usersApi.create,
+    onSuccess: () => {
       message.success('用户创建成功')
       setCreateModal(false)
-      form.resetFields()
+      createForm.resetFields()
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+    },
+    onError: (error: Error) => {
+      message.error(`创建失败: ${error.message}`)
+    },
+  })
+  
+  // Update user mutation
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: Parameters<typeof usersApi.update>[1] }) => 
+      usersApi.update(id, data),
+    onSuccess: () => {
+      message.success('用户更新成功')
+      setEditModal({ visible: false, user: null })
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+    },
+    onError: (error: Error) => {
+      message.error(`更新失败: ${error.message}`)
+    },
+  })
+  
+  // Delete/disable user mutation
+  const deleteMutation = useMutation({
+    mutationFn: usersApi.delete,
+    onSuccess: () => {
+      message.success('用户已禁用')
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+    },
+    onError: (error: Error) => {
+      message.error(`操作失败: ${error.message}`)
+    },
+  })
+  
+  // Set edit form values when user changes
+  useEffect(() => {
+    if (editModal.user) {
+      editForm.setFieldsValue(editModal.user)
+    }
+  }, [editModal.user, editForm])
+  
+  const handleCreate = () => {
+    createForm.validateFields().then((values) => {
+      createMutation.mutate(values)
     })
   }
   
   const handleUpdate = () => {
-    form.validateFields().then(() => {
-      message.success('用户更新成功')
-      setEditModal({ visible: false, user: null })
+    editForm.validateFields().then((values) => {
+      if (editModal.user) {
+        updateMutation.mutate({ id: editModal.user.id, data: values })
+      }
     })
   }
   
-  const handleDisable = (id: number) => {
+  const handleDisable = (user: User) => {
     Modal.confirm({
       title: '确认禁用',
-      content: '确定要禁用该用户吗？',
+      content: `确定要禁用用户 "${user.display_name || user.username}" 吗？`,
       onOk: () => {
-        message.success(`用户 #${id} 已禁用`)
+        deleteMutation.mutate(user.id)
       },
     })
+  }
+  
+  const handleEnable = (user: User) => {
+    updateMutation.mutate({ id: user.id, data: { is_active: true } })
   }
   
   const columns = [
     {
       title: '用户',
       key: 'user',
-      render: (_: unknown, record: typeof mockUsers[0]) => (
+      render: (_: unknown, record: User) => (
         <Space>
           <Avatar style={{ backgroundColor: record.is_active ? '#0ea5e9' : '#64748b' }}>
             {record.display_name?.[0] || record.username[0].toUpperCase()}
@@ -81,10 +133,10 @@ export default function Users() {
       dataIndex: 'role',
       key: 'role',
       render: (role: string) => (
-        <Tag color={roleColors[role]}>{roleNames[role]}</Tag>
+        <Tag color={roleColors[role] || 'default'}>{roleNames[role] || role}</Tag>
       ),
     },
-    { title: '部门', dataIndex: 'department', key: 'department' },
+    { title: '部门', dataIndex: 'department', key: 'department', render: (d: string) => d || '-' },
     {
       title: '状态',
       dataIndex: 'is_active',
@@ -93,18 +145,43 @@ export default function Users() {
         <Tag color={active ? 'green' : 'default'}>{active ? '正常' : '已禁用'}</Tag>
       ),
     },
-    { title: '最后登录', dataIndex: 'last_login_at', key: 'last_login_at' },
+    { 
+      title: '最后登录', 
+      dataIndex: 'last_login_at', 
+      key: 'last_login_at',
+      render: (t: string) => t || '从未登录'
+    },
     {
       title: '操作',
       key: 'actions',
-      render: (_: unknown, record: typeof mockUsers[0]) => (
+      render: (_: unknown, record: User) => (
         <Space>
-          <Button type="link" icon={<EditOutlined />} onClick={() => setEditModal({ visible: true, user: record })}>
+          <Button 
+            type="link" 
+            icon={<EditOutlined />} 
+            onClick={() => setEditModal({ visible: true, user: record })}
+          >
             编辑
           </Button>
           {record.is_active && record.role !== 'admin' && (
-            <Button type="link" danger icon={<StopOutlined />} onClick={() => handleDisable(record.id)}>
+            <Button 
+              type="link" 
+              danger 
+              icon={<StopOutlined />} 
+              onClick={() => handleDisable(record)}
+              loading={deleteMutation.isPending}
+            >
               禁用
+            </Button>
+          )}
+          {!record.is_active && (
+            <Button 
+              type="link" 
+              icon={<CheckCircleOutlined />} 
+              onClick={() => handleEnable(record)}
+              loading={updateMutation.isPending}
+            >
+              启用
             </Button>
           )}
         </Space>
@@ -123,7 +200,13 @@ export default function Users() {
           </Button>
         </div>
         
-        <Table dataSource={mockUsers} columns={columns} rowKey="id" />
+        <Table 
+          dataSource={data?.users ?? []} 
+          columns={columns} 
+          rowKey="id" 
+          loading={isLoading}
+          locale={{ emptyText: '暂无用户' }}
+        />
       </Card>
       
       {/* Create User Modal */}
@@ -132,20 +215,33 @@ export default function Users() {
         open={createModal}
         onCancel={() => {
           setCreateModal(false)
-          form.resetFields()
+          createForm.resetFields()
         }}
         onOk={handleCreate}
+        confirmLoading={createMutation.isPending}
       >
-        <Form form={form} layout="vertical">
-          <Form.Item label="用户名" name="username" rules={[{ required: true, message: '请输入用户名' }]}>
+        <Form form={createForm} layout="vertical">
+          <Form.Item 
+            label="用户名" 
+            name="username" 
+            rules={[{ required: true, message: '请输入用户名' }]}
+          >
             <Input prefix={<UserOutlined />} placeholder="用户名" />
           </Form.Item>
           
-          <Form.Item label="邮箱" name="email" rules={[{ required: true, type: 'email', message: '请输入有效邮箱' }]}>
+          <Form.Item 
+            label="邮箱" 
+            name="email" 
+            rules={[{ required: true, type: 'email', message: '请输入有效邮箱' }]}
+          >
             <Input placeholder="email@example.com" />
           </Form.Item>
           
-          <Form.Item label="密码" name="password" rules={[{ required: true, min: 8, message: '密码至少8位' }]}>
+          <Form.Item 
+            label="密码" 
+            name="password" 
+            rules={[{ required: true, min: 8, message: '密码至少8位' }]}
+          >
             <Input.Password placeholder="密码" />
           </Form.Item>
           
@@ -153,7 +249,7 @@ export default function Users() {
             <Input placeholder="显示名称" />
           </Form.Item>
           
-          <Form.Item label="角色" name="role" rules={[{ required: true }]}>
+          <Form.Item label="角色" name="role" rules={[{ required: true, message: '请选择角色' }]}>
             <Select placeholder="选择角色">
               <Select.Option value="admin">管理员</Select.Option>
               <Select.Option value="data_ops">数据运维</Select.Option>
@@ -170,21 +266,26 @@ export default function Users() {
       
       {/* Edit User Modal */}
       <Modal
-        title={`编辑用户: ${editModal.user?.display_name || editModal.user?.username}`}
+        title={`编辑用户: ${editModal.user?.display_name || editModal.user?.username || ''}`}
         open={editModal.visible}
         onCancel={() => setEditModal({ visible: false, user: null })}
         onOk={handleUpdate}
+        confirmLoading={updateMutation.isPending}
       >
-        <Form form={form} layout="vertical" initialValues={editModal.user || undefined}>
+        <Form form={editForm} layout="vertical">
           <Form.Item label="显示名称" name="display_name">
             <Input placeholder="显示名称" />
           </Form.Item>
           
-          <Form.Item label="邮箱" name="email" rules={[{ type: 'email', message: '请输入有效邮箱' }]}>
+          <Form.Item 
+            label="邮箱" 
+            name="email" 
+            rules={[{ type: 'email', message: '请输入有效邮箱' }]}
+          >
             <Input placeholder="email@example.com" />
           </Form.Item>
           
-          <Form.Item label="角色" name="role" rules={[{ required: true }]}>
+          <Form.Item label="角色" name="role" rules={[{ required: true, message: '请选择角色' }]}>
             <Select placeholder="选择角色">
               <Select.Option value="admin">管理员</Select.Option>
               <Select.Option value="data_ops">数据运维</Select.Option>
@@ -201,4 +302,3 @@ export default function Users() {
     </div>
   )
 }
-

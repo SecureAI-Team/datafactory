@@ -29,6 +29,15 @@ export interface CreateScenarioRequest {
   sort_order?: number
 }
 
+// Prompt variable type
+export interface PromptVariable {
+  name: string
+  description?: string
+  type?: string
+  default?: unknown
+  required?: boolean
+}
+
 // Prompt types
 export interface PromptTemplate {
   id: number
@@ -36,7 +45,7 @@ export interface PromptTemplate {
   type: string
   scenario_id?: string
   template: string
-  variables: string[]
+  variables: PromptVariable[]
   version: number
   is_active: boolean
   created_at: string
@@ -48,7 +57,7 @@ export interface CreatePromptRequest {
   type: string
   scenario_id?: string
   template: string
-  variables?: string[]
+  variables?: PromptVariable[]
   is_active?: boolean
 }
 

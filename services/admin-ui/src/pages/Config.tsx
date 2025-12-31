@@ -259,7 +259,10 @@ export default function Config() {
   // Form effects
   useEffect(() => {
     if (promptModal.item && !promptModal.isNew) {
-      promptForm.setFieldsValue(promptModal.item)
+      // Exclude 'variables' field as it's not editable in the form
+      // and contains objects that can cause React render errors
+      const { variables: _variables, ...formValues } = promptModal.item
+      promptForm.setFieldsValue(formValues)
     } else if (promptModal.isNew) {
       promptForm.resetFields()
     }

@@ -1,4 +1,4 @@
-import { Card, Row, Col, Statistic, Table, Tag, List, Typography, Spin, message, Progress } from 'antd'
+import { Card, Row, Col, Statistic, Table, Tag, List, Typography, Spin, message } from 'antd'
 import {
   FileTextOutlined,
   DatabaseOutlined,
@@ -185,7 +185,8 @@ export default function Dashboard() {
     message.error('加载统计数据失败')
   }
   
-  const isLoading = loadingOverview || loadingActivity || loadingReviews
+  const _isLoading = loadingOverview || loadingActivity || loadingReviews
+  void _isLoading // suppress unused warning
   
   return (
     <div>

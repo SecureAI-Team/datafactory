@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Card, Table, Tag, Button, Space, Modal, Typography, Spin, message, Tabs, Descriptions } from 'antd'
+import { useState } from 'react'
+import { Card, Tag, Button, Space, Modal, Typography, Spin, message, Tabs, Descriptions } from 'antd'
 import { 
   MergeCellsOutlined, 
   EyeOutlined, 
@@ -69,7 +69,7 @@ function DedupGroupCard({
     >
       <div>
         <Text type="secondary">包含 KU IDs: </Text>
-        {group.ku_ids.map((id, index) => (
+        {group.ku_ids.map((id) => (
           <Tag key={id} style={{ marginBottom: 4 }}>
             KU-{id}
           </Tag>
@@ -162,8 +162,6 @@ export default function Dedup() {
 
   const pendingGroups = groups?.filter(g => g.status === 'pending') || []
   const approvedGroups = groups?.filter(g => g.status === 'approved') || []
-  const mergedGroups = groups?.filter(g => g.status === 'merged') || []
-  const dismissedGroups = groups?.filter(g => g.status === 'dismissed') || []
 
   const tabItems = [
     {

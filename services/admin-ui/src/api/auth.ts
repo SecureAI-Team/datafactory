@@ -13,7 +13,7 @@ export interface AuthResponse {
     id: number
     username: string
     email: string
-    display_name: string
+    display_name?: string
     role: string
   }
 }
@@ -22,7 +22,7 @@ export interface User {
   id: number
   username: string
   email: string
-  display_name: string
+  display_name?: string
   role: string
   department?: string
   is_active: boolean

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Card, Typography, Tabs, Form, Input, Switch, Button, Table, Tag, Space, message, Spin, Modal, Select, InputNumber, Divider } from 'antd'
+import { Card, Typography, Tabs, Form, Input, Switch, Button, Table, Tag, Space, message, Spin, Modal, Select, InputNumber } from 'antd'
 import {
   RobotOutlined,
   ApiOutlined,

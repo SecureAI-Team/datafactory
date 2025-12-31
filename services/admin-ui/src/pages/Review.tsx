@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Card, Table, Tag, Button, Space, Tabs, Modal, Input, message, Typography, Spin } from 'antd'
+import { Card, Table, Tag, Button, Space, Tabs, Modal, Input, message, Typography } from 'antd'
 import { CheckOutlined, CloseOutlined, QuestionCircleOutlined, EyeOutlined } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { reviewApi, Contribution } from '../api'

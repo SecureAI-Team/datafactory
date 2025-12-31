@@ -147,7 +147,7 @@ function FeedbackAnalysis() {
   
   // Create task mutation
   const createTaskMutation = useMutation({
-    mutationFn: tasksApi.create,
+    mutationFn: tasksApi.createTask,
     onSuccess: () => {
       message.success('优化任务已创建')
       setTaskModal({ visible: false, item: null })

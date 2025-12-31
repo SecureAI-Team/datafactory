@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Card, Table, Tag, Button, Space, Tabs, Modal, Input, message, Typography, Spin, Alert } from 'antd'
-import { CheckOutlined, CloseOutlined, QuestionCircleOutlined, EyeOutlined, DownloadOutlined, FileTextOutlined, FilePdfOutlined, FileImageOutlined } from '@ant-design/icons'
+import { CheckOutlined, CloseOutlined, QuestionCircleOutlined, EyeOutlined, DownloadOutlined, FilePdfOutlined } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { reviewApi, Contribution } from '../api'
 
@@ -45,10 +45,13 @@ function PreviewModal({ visible, item, onClose, onApprove, onReject, isApproving
       const contentResult = await reviewApi.getFileContent(contribution.id)
       
       if (contentResult.content) {
+        // Derive type from mime_type
+        const derivedType = contentResult.mime_type?.startsWith('text/') ? 'text' : 
+                           contentResult.mime_type === 'application/json' ? 'json' : 'text'
         setPreviewData({
           content: contentResult.content,
           mime_type: contentResult.mime_type,
-          type: contentResult.type,
+          type: derivedType,
           loading: false
         })
       } else {

@@ -1,4 +1,4 @@
-import { Card, Row, Col, Statistic, Table, Tag, List, Typography, Spin, message } from 'antd'
+import { Card, Row, Col, Statistic, Table, Tag, List, Typography, Spin, message, Progress } from 'antd'
 import {
   FileTextOutlined,
   DatabaseOutlined,
@@ -6,11 +6,68 @@ import {
   WarningOutlined,
   CheckCircleOutlined,
   SyncOutlined,
+  RiseOutlined,
 } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import { statsApi, reviewApi } from '../api'
 
 const { Title, Text } = Typography
+
+// Simple Bar Chart Component
+function SimpleBarChart({ data }: { data: { label: string; value: number }[] }) {
+  const maxValue = Math.max(...data.map(d => d.value), 1)
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 120, paddingTop: 16 }}>
+      {data.map((item, index) => (
+        <div key={index} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <div 
+            style={{ 
+              width: '100%', 
+              height: `${(item.value / maxValue) * 100}px`,
+              backgroundColor: '#0ea5e9',
+              borderRadius: '4px 4px 0 0',
+              transition: 'height 0.3s ease',
+              minHeight: 4
+            }} 
+          />
+          <Text type="secondary" style={{ fontSize: 11, marginTop: 4 }}>{item.label}</Text>
+          <Text style={{ fontSize: 12 }}>{item.value}</Text>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Simple Pie Chart using Progress circles
+function KUDistributionChart({ data }: { data: { name: string; value: number; color: string }[] }) {
+  const total = data.reduce((sum, d) => sum + d.value, 0) || 1
+  return (
+    <div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+        {data.map((item, index) => (
+          <div key={index} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '48%' }}>
+            <div style={{ width: 12, height: 12, borderRadius: 2, backgroundColor: item.color }} />
+            <Text style={{ fontSize: 12, flex: 1 }}>{item.name}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>{Math.round((item.value / total) * 100)}%</Text>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 16, display: 'flex', height: 16, borderRadius: 4, overflow: 'hidden' }}>
+        {data.map((item, index) => (
+          <div 
+            key={index}
+            style={{ 
+              width: `${(item.value / total) * 100}%`,
+              backgroundColor: item.color,
+              minWidth: item.value > 0 ? 4 : 0
+            }}
+            title={`${item.name}: ${item.value}`}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
 
 const columns = [
   { title: '标题', dataIndex: 'title', key: 'title' },
@@ -73,6 +130,56 @@ export default function Dashboard() {
     staleTime: 30000,
   })
   
+  // Fetch pipeline stats (real API)
+  const { data: pipelineData } = useQuery({
+    queryKey: ['stats-pipeline'],
+    queryFn: () => statsApi.getPipeline(7),
+    staleTime: 60000,
+  })
+  
+  // Transform pipeline data for chart
+  const pipelineTrends = {
+    trends: Object.entries(pipelineData?.daily_stats || {})
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-7)
+      .map(([date, stats]) => {
+        const typedStats = stats as { success: number; failed: number; running: number }
+        return {
+          label: new Date(date).toLocaleDateString('zh-CN', { weekday: 'short' }),
+          value: typedStats.success + typedStats.failed + typedStats.running
+        }
+      })
+  }
+  
+  // Fetch quality stats for KU distribution (real API)
+  const { data: qualityData } = useQuery({
+    queryKey: ['stats-quality-dashboard'],
+    queryFn: () => statsApi.getQuality(),
+    staleTime: 60000,
+  })
+  
+  // Transform KU distribution data for chart
+  const categoryColors: Record<string, string> = {
+    'core': '#0ea5e9',
+    'case': '#22c55e',
+    'solution': '#8b5cf6',
+    'quote': '#f59e0b',
+    'sales': '#ec4899',
+    'delivery': '#06b6d4',
+    'field': '#84cc16',
+  }
+  
+  const kuDistribution = {
+    distribution: Object.entries(qualityData?.ku_type_distribution || {}).map(([type, count]) => {
+      const category = type.split('.')[0] || 'other'
+      return {
+        name: type,
+        value: count as number,
+        color: categoryColors[category] || '#64748b'
+      }
+    })
+  }
+  
   // Handle errors
   if (overviewError) {
     message.error('加载统计数据失败')
@@ -129,6 +236,35 @@ export default function Dashboard() {
           </Col>
         </Row>
       </Spin>
+      
+      {/* Charts Row */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col span={16}>
+          {/* Pipeline Trend Chart */}
+          <Card 
+            title={
+              <span>
+                <RiseOutlined style={{ marginRight: 8 }} />
+                Pipeline 处理趋势（近7天）
+              </span>
+            }
+          >
+            <SimpleBarChart data={pipelineTrends?.trends ?? []} />
+          </Card>
+        </Col>
+        
+        <Col span={8}>
+          {/* KU Distribution Chart */}
+          <Card title="KU 类型分布">
+            <KUDistributionChart data={kuDistribution?.distribution ?? []} />
+            <div style={{ marginTop: 16, textAlign: 'center' }}>
+              <Text type="secondary">
+                总计: {(kuDistribution?.distribution ?? []).reduce((sum, d) => sum + d.value, 0)} 个 KU
+              </Text>
+            </div>
+          </Card>
+        </Col>
+      </Row>
       
       {/* Main Content */}
       <Row gutter={[16, 16]}>

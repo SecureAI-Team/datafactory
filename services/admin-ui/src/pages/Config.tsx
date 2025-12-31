@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { Card, Tabs, Table, Button, Space, Tag, Modal, Form, Input, Select, message, Typography, Spin, List, Switch } from 'antd'
-import { PlusOutlined, EditOutlined, HistoryOutlined, PlayCircleOutlined, RollbackOutlined } from '@ant-design/icons'
+import { Card, Tabs, Table, Button, Space, Tag, Modal, Form, Input, Select, message, Typography, Spin, List, Switch, InputNumber } from 'antd'
+import { PlusOutlined, EditOutlined, HistoryOutlined, PlayCircleOutlined, RollbackOutlined, DeleteOutlined, CodeOutlined } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { configApi, Scenario, PromptTemplate, KUType } from '../api'
+import { configApi, Scenario, PromptTemplate, KUType, ParameterDefinition, CalculationRule, CreateParameterRequest, CreateCalcRuleRequest } from '../api'
 
 const { Title, Text, Paragraph } = Typography
 const { TextArea } = Input
@@ -52,6 +52,27 @@ export default function Config() {
   const [testInput, setTestInput] = useState('')
   const [testOutput, setTestOutput] = useState('')
   
+  // Parameter and CalcRule modals
+  const [paramModal, setParamModal] = useState<{ visible: boolean; item: ParameterDefinition | null; isNew: boolean }>({
+    visible: false,
+    item: null,
+    isNew: false,
+  })
+  const [calcRuleModal, setCalcRuleModal] = useState<{ visible: boolean; item: CalculationRule | null; isNew: boolean }>({
+    visible: false,
+    item: null,
+    isNew: false,
+  })
+  const [calcTestModal, setCalcTestModal] = useState<{ visible: boolean; rule: CalculationRule | null }>({
+    visible: false,
+    rule: null,
+  })
+  const [calcTestInputs, setCalcTestInputs] = useState<Record<string, string>>({})
+  const [calcTestResult, setCalcTestResult] = useState<string>('')
+  
+  const [paramForm] = Form.useForm()
+  const [calcRuleForm] = Form.useForm()
+  
   // Fetch data
   const { data: scenariosData, isLoading: loadingScenarios } = useQuery({
     queryKey: ['config-scenarios'],
@@ -66,6 +87,18 @@ export default function Config() {
   const { data: kuTypesData, isLoading: loadingKUTypes } = useQuery({
     queryKey: ['config-ku-types'],
     queryFn: () => configApi.getKUTypes(),
+  })
+  
+  // Fetch parameters
+  const { data: parametersData, isLoading: loadingParameters } = useQuery({
+    queryKey: ['config-parameters'],
+    queryFn: () => configApi.getParameters(),
+  })
+  
+  // Fetch calculation rules
+  const { data: calcRulesData, isLoading: loadingCalcRules } = useQuery({
+    queryKey: ['config-calc-rules'],
+    queryFn: () => configApi.getCalcRules(),
   })
   
   // Fetch prompt history when modal is open
@@ -145,13 +178,82 @@ export default function Config() {
   
   const updateKuTypeMutation = useMutation({
     mutationFn: ({ typeCode, data }: { typeCode: string; data: Partial<KUType> }) =>
-      configApi.updateKUType(typeCode as unknown as number, data),
+      configApi.updateKUType(typeCode, data),
     onSuccess: () => {
       message.success('KU 类型更新成功')
       queryClient.invalidateQueries({ queryKey: ['config-ku-types'] })
       setKuTypeModal({ visible: false, item: null, isNew: false })
     },
     onError: () => message.error('更新失败'),
+  })
+  
+  // Parameter mutations
+  const createParamMutation = useMutation({
+    mutationFn: (data: CreateParameterRequest) => configApi.createParameter(data),
+    onSuccess: () => {
+      message.success('参数创建成功')
+      queryClient.invalidateQueries({ queryKey: ['config-parameters'] })
+      setParamModal({ visible: false, item: null, isNew: false })
+      paramForm.resetFields()
+    },
+    onError: () => message.error('创建失败'),
+  })
+  
+  const updateParamMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: Partial<CreateParameterRequest> }) =>
+      configApi.updateParameter(id, data),
+    onSuccess: () => {
+      message.success('参数更新成功')
+      queryClient.invalidateQueries({ queryKey: ['config-parameters'] })
+      setParamModal({ visible: false, item: null, isNew: false })
+    },
+    onError: () => message.error('更新失败'),
+  })
+  
+  const deleteParamMutation = useMutation({
+    mutationFn: (id: number) => configApi.deleteParameter(id),
+    onSuccess: () => {
+      message.success('参数已删除')
+      queryClient.invalidateQueries({ queryKey: ['config-parameters'] })
+    },
+    onError: () => message.error('删除失败'),
+  })
+  
+  // Calc rule mutations
+  const createCalcRuleMutation = useMutation({
+    mutationFn: (data: CreateCalcRuleRequest) => configApi.createCalcRule(data),
+    onSuccess: () => {
+      message.success('计算规则创建成功')
+      queryClient.invalidateQueries({ queryKey: ['config-calc-rules'] })
+      setCalcRuleModal({ visible: false, item: null, isNew: false })
+      calcRuleForm.resetFields()
+    },
+    onError: () => message.error('创建失败'),
+  })
+  
+  const updateCalcRuleMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: Partial<CreateCalcRuleRequest> }) =>
+      configApi.updateCalcRule(id, data),
+    onSuccess: () => {
+      message.success('计算规则更新成功')
+      queryClient.invalidateQueries({ queryKey: ['config-calc-rules'] })
+      setCalcRuleModal({ visible: false, item: null, isNew: false })
+    },
+    onError: () => message.error('更新失败'),
+  })
+  
+  const testCalcRuleMutation = useMutation({
+    mutationFn: ({ ruleId, inputs }: { ruleId: number; inputs: Record<string, unknown> }) =>
+      configApi.testCalcRule(ruleId, inputs),
+    onSuccess: (data) => {
+      setCalcTestResult(data.success ? JSON.stringify(data.result, null, 2) : `错误: ${data.error}`)
+      if (data.success) {
+        message.success('测试完成')
+      } else {
+        message.error(`测试失败: ${data.error}`)
+      }
+    },
+    onError: () => message.error('测试失败'),
   })
   
   // Form effects
@@ -179,10 +281,37 @@ export default function Config() {
     }
   }, [kuTypeModal, kuTypeForm])
   
+  useEffect(() => {
+    if (paramModal.item && !paramModal.isNew) {
+      paramForm.setFieldsValue({
+        ...paramModal.item,
+        synonyms: paramModal.item.synonyms?.join(', ') || '',
+      })
+    } else if (paramModal.isNew) {
+      paramForm.resetFields()
+    }
+  }, [paramModal, paramForm])
+  
+  useEffect(() => {
+    if (calcRuleModal.item && !calcRuleModal.isNew) {
+      calcRuleForm.setFieldsValue({
+        ...calcRuleModal.item,
+        input_params: calcRuleModal.item.input_params?.join(', ') || '',
+      })
+    } else if (calcRuleModal.isNew) {
+      calcRuleForm.resetFields()
+    }
+  }, [calcRuleModal, calcRuleForm])
+  
   const handleSavePrompt = () => {
-    promptForm.validateFields().then((values: Record<string, unknown>) => {
+    promptForm.validateFields().then((values) => {
       if (promptModal.isNew) {
-        createPromptMutation.mutate(values as Parameters<typeof createPromptMutation.mutate>[0])
+        createPromptMutation.mutate({
+          name: values.name as string,
+          type: values.type as string,
+          template: values.template as string,
+          scenario_id: values.scenario_id as string | undefined,
+        })
       } else if (promptModal.item) {
         updatePromptMutation.mutate({ id: promptModal.item.id, data: values })
       }
@@ -190,9 +319,15 @@ export default function Config() {
   }
   
   const handleSaveScenario = () => {
-    scenarioForm.validateFields().then((values: Record<string, unknown>) => {
+    scenarioForm.validateFields().then((values) => {
       if (scenarioModal.isNew) {
-        createScenarioMutation.mutate(values as Parameters<typeof createScenarioMutation.mutate>[0])
+        createScenarioMutation.mutate({
+          scenario_id: values.scenario_id as string,
+          name: values.name as string,
+          description: values.description as string | undefined,
+          icon: values.icon as string | undefined,
+          is_active: values.is_active as boolean | undefined,
+        })
       } else if (scenarioModal.item) {
         updateScenarioMutation.mutate({ id: scenarioModal.item.scenario_id, data: values })
       }
@@ -200,9 +335,18 @@ export default function Config() {
   }
   
   const handleSaveKuType = () => {
-    kuTypeForm.validateFields().then((values: Record<string, unknown>) => {
+    kuTypeForm.validateFields().then((values) => {
       if (kuTypeModal.isNew) {
-        createKuTypeMutation.mutate(values as Parameters<typeof createKuTypeMutation.mutate>[0])
+        createKuTypeMutation.mutate({
+          type_code: values.type_code as string,
+          category: values.category as string,
+          display_name: values.display_name as string,
+          description: values.description as string | undefined,
+          merge_strategy: values.merge_strategy as string | undefined,
+          requires_expiry: values.requires_expiry as boolean | undefined,
+          requires_approval: values.requires_approval as boolean | undefined,
+          is_active: values.is_active as boolean | undefined,
+        })
       } else if (kuTypeModal.item) {
         updateKuTypeMutation.mutate({ typeCode: kuTypeModal.item.type_code, data: values })
       }
@@ -218,6 +362,48 @@ export default function Config() {
     })
     setTestOutput(result)
     message.success('模板渲染完成')
+  }
+  
+  const handleSaveParam = () => {
+    paramForm.validateFields().then((values: Record<string, unknown>) => {
+      const data = {
+        ...values,
+        synonyms: typeof values.synonyms === 'string' 
+          ? (values.synonyms as string).split(',').map((s: string) => s.trim()).filter(Boolean)
+          : [],
+      }
+      if (paramModal.isNew) {
+        createParamMutation.mutate(data as unknown as CreateParameterRequest)
+      } else if (paramModal.item) {
+        updateParamMutation.mutate({ id: paramModal.item.id, data: data as Partial<CreateParameterRequest> })
+      }
+    })
+  }
+  
+  const handleSaveCalcRule = () => {
+    calcRuleForm.validateFields().then((values: Record<string, unknown>) => {
+      const data = {
+        ...values,
+        input_params: typeof values.input_params === 'string'
+          ? (values.input_params as string).split(',').map((s: string) => s.trim()).filter(Boolean)
+          : [],
+      }
+      if (calcRuleModal.isNew) {
+        createCalcRuleMutation.mutate(data as unknown as CreateCalcRuleRequest)
+      } else if (calcRuleModal.item) {
+        updateCalcRuleMutation.mutate({ id: calcRuleModal.item.id, data: data as Partial<CreateCalcRuleRequest> })
+      }
+    })
+  }
+  
+  const handleTestCalcRule = () => {
+    if (!calcTestModal.rule) return
+    const inputs: Record<string, unknown> = {}
+    calcTestModal.rule.input_params.forEach(param => {
+      const val = calcTestInputs[param]
+      inputs[param] = isNaN(Number(val)) ? val : Number(val)
+    })
+    testCalcRuleMutation.mutate({ ruleId: calcTestModal.rule.id, inputs })
   }
   
   // Column definitions
@@ -309,6 +495,108 @@ export default function Config() {
               setTestModal({ visible: true, prompt: record })
               setTestInput('')
               setTestOutput('')
+            }}
+          >
+            测试
+          </Button>
+        </Space>
+      ),
+    },
+  ]
+  
+  // Parameter columns
+  const paramColumns = [
+    { title: '参数名称', dataIndex: 'name', key: 'name' },
+    { title: '代码', dataIndex: 'code', key: 'code' },
+    { 
+      title: '数据类型', 
+      dataIndex: 'data_type', 
+      key: 'data_type',
+      render: (type: string) => <Tag>{type}</Tag>
+    },
+    { title: '单位', dataIndex: 'unit', key: 'unit', render: (u: string) => u || '-' },
+    { title: '分类', dataIndex: 'category', key: 'category', render: (c: string) => c || '-' },
+    {
+      title: '同义词',
+      dataIndex: 'synonyms',
+      key: 'synonyms',
+      render: (syns: string[]) => syns?.length > 0 ? syns.slice(0, 2).join(', ') + (syns.length > 2 ? '...' : '') : '-'
+    },
+    {
+      title: '系统内置',
+      dataIndex: 'is_system',
+      key: 'is_system',
+      render: (sys: boolean) => sys ? <Tag color="purple">系统</Tag> : <Tag>自定义</Tag>
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      render: (_: unknown, record: ParameterDefinition) => (
+        <Space>
+          <Button 
+            type="link" 
+            icon={<EditOutlined />}
+            onClick={() => setParamModal({ visible: true, item: record, isNew: false })}
+          >
+            编辑
+          </Button>
+          {!record.is_system && (
+            <Button 
+              type="link" 
+              danger
+              icon={<DeleteOutlined />}
+              onClick={() => {
+                Modal.confirm({
+                  title: '确认删除?',
+                  content: `确定要删除参数 "${record.name}" 吗?`,
+                  onOk: () => deleteParamMutation.mutate(record.id),
+                })
+              }}
+            >
+              删除
+            </Button>
+          )}
+        </Space>
+      ),
+    },
+  ]
+  
+  // Calc rule columns
+  const calcRuleColumns = [
+    { title: '规则名称', dataIndex: 'name', key: 'name' },
+    { title: '代码', dataIndex: 'code', key: 'code' },
+    { title: '描述', dataIndex: 'description', key: 'description', ellipsis: true, render: (d: string) => d || '-' },
+    { 
+      title: '输入参数', 
+      dataIndex: 'input_params', 
+      key: 'input_params',
+      render: (params: string[]) => params?.map((p: string) => <Tag key={p}>{p}</Tag>)
+    },
+    {
+      title: '状态',
+      dataIndex: 'is_active',
+      key: 'is_active',
+      render: (active: boolean) => <Tag color={active ? 'green' : 'default'}>{active ? '启用' : '禁用'}</Tag>
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      render: (_: unknown, record: CalculationRule) => (
+        <Space>
+          <Button 
+            type="link" 
+            icon={<EditOutlined />}
+            onClick={() => setCalcRuleModal({ visible: true, item: record, isNew: false })}
+          >
+            编辑
+          </Button>
+          <Button 
+            type="link" 
+            icon={<CodeOutlined />}
+            onClick={() => {
+              setCalcTestModal({ visible: true, rule: record })
+              setCalcTestInputs({})
+              setCalcTestResult('')
             }}
           >
             测试
@@ -446,6 +734,56 @@ export default function Config() {
               columns={kuTypeColumns} 
               rowKey="type_code" 
               locale={{ emptyText: '暂无 KU 类型' }}
+            />
+          </Spin>
+        </div>
+      ),
+    },
+    {
+      key: 'parameters',
+      label: '参数定义',
+      children: (
+        <div>
+          <div style={{ marginBottom: 16 }}>
+            <Button 
+              type="primary" 
+              icon={<PlusOutlined />}
+              onClick={() => setParamModal({ visible: true, item: null, isNew: true })}
+            >
+              新建参数
+            </Button>
+          </div>
+          <Spin spinning={loadingParameters}>
+            <Table 
+              dataSource={parametersData?.parameters ?? []} 
+              columns={paramColumns} 
+              rowKey="id" 
+              locale={{ emptyText: '暂无参数定义' }}
+            />
+          </Spin>
+        </div>
+      ),
+    },
+    {
+      key: 'calc-rules',
+      label: '计算规则',
+      children: (
+        <div>
+          <div style={{ marginBottom: 16 }}>
+            <Button 
+              type="primary" 
+              icon={<PlusOutlined />}
+              onClick={() => setCalcRuleModal({ visible: true, item: null, isNew: true })}
+            >
+              新建规则
+            </Button>
+          </div>
+          <Spin spinning={loadingCalcRules}>
+            <Table 
+              dataSource={calcRulesData?.rules ?? []} 
+              columns={calcRuleColumns} 
+              rowKey="id" 
+              locale={{ emptyText: '暂无计算规则' }}
             />
           </Spin>
         </div>
@@ -733,6 +1071,185 @@ export default function Config() {
               </pre>
             </div>
           </div>
+        )}
+      </Modal>
+      
+      {/* Parameter Edit Modal */}
+      <Modal
+        title={paramModal.isNew ? '新建参数' : `编辑: ${paramModal.item?.name || ''}`}
+        open={paramModal.visible}
+        onCancel={() => setParamModal({ visible: false, item: null, isNew: false })}
+        onOk={handleSaveParam}
+        confirmLoading={createParamMutation.isPending || updateParamMutation.isPending}
+        width={600}
+      >
+        <Form form={paramForm} layout="vertical">
+          <Form.Item 
+            label="参数名称" 
+            name="name" 
+            rules={[{ required: true, message: '请输入参数名称' }]}
+          >
+            <Input placeholder="检测精度" />
+          </Form.Item>
+          
+          <Form.Item 
+            label="代码" 
+            name="code" 
+            rules={[{ required: true, message: '请输入参数代码' }]}
+          >
+            <Input placeholder="detection_accuracy" disabled={!paramModal.isNew} />
+          </Form.Item>
+          
+          <Form.Item 
+            label="数据类型" 
+            name="data_type" 
+            rules={[{ required: true }]}
+          >
+            <Select placeholder="选择数据类型">
+              <Select.Option value="string">字符串</Select.Option>
+              <Select.Option value="number">数字</Select.Option>
+              <Select.Option value="boolean">布尔值</Select.Option>
+              <Select.Option value="array">数组</Select.Option>
+              <Select.Option value="object">对象</Select.Option>
+            </Select>
+          </Form.Item>
+          
+          <Form.Item label="单位" name="unit">
+            <Input placeholder="mm" />
+          </Form.Item>
+          
+          <Form.Item label="分类" name="category">
+            <Input placeholder="AOI" />
+          </Form.Item>
+          
+          <Form.Item 
+            label="同义词" 
+            name="synonyms"
+            extra="多个同义词用逗号分隔"
+          >
+            <Input placeholder="精度, 检测分辨率" />
+          </Form.Item>
+        </Form>
+      </Modal>
+      
+      {/* Calc Rule Edit Modal */}
+      <Modal
+        title={calcRuleModal.isNew ? '新建计算规则' : `编辑: ${calcRuleModal.item?.name || ''}`}
+        open={calcRuleModal.visible}
+        onCancel={() => setCalcRuleModal({ visible: false, item: null, isNew: false })}
+        onOk={handleSaveCalcRule}
+        confirmLoading={createCalcRuleMutation.isPending || updateCalcRuleMutation.isPending}
+        width={700}
+      >
+        <Form form={calcRuleForm} layout="vertical">
+          <Form.Item 
+            label="规则名称" 
+            name="name" 
+            rules={[{ required: true, message: '请输入规则名称' }]}
+          >
+            <Input placeholder="产能计算" />
+          </Form.Item>
+          
+          <Form.Item 
+            label="代码" 
+            name="code" 
+            rules={[{ required: true, message: '请输入规则代码' }]}
+          >
+            <Input placeholder="capacity_calc" disabled={!calcRuleModal.isNew} />
+          </Form.Item>
+          
+          <Form.Item label="描述" name="description">
+            <TextArea rows={2} placeholder="规则描述" />
+          </Form.Item>
+          
+          <Form.Item 
+            label="公式" 
+            name="formula" 
+            rules={[{ required: true, message: '请输入计算公式' }]}
+            extra="使用变量名编写公式，如: scan_speed * 3600 * work_hours"
+          >
+            <TextArea rows={3} placeholder="scan_speed * 3600 * work_hours" />
+          </Form.Item>
+          
+          <Form.Item 
+            label="输入参数" 
+            name="input_params"
+            rules={[{ required: true }]}
+            extra="多个参数用逗号分隔"
+          >
+            <Input placeholder="scan_speed, work_hours" />
+          </Form.Item>
+          
+          <Form.Item label="输出类型" name="output_type" initialValue="number">
+            <Select>
+              <Select.Option value="number">数字</Select.Option>
+              <Select.Option value="string">字符串</Select.Option>
+              <Select.Option value="boolean">布尔值</Select.Option>
+              <Select.Option value="object">对象</Select.Option>
+            </Select>
+          </Form.Item>
+          
+          <Form.Item label="状态" name="is_active" valuePropName="checked" initialValue={true}>
+            <Switch checkedChildren="启用" unCheckedChildren="禁用" />
+          </Form.Item>
+        </Form>
+      </Modal>
+      
+      {/* Calc Rule Test Modal */}
+      <Modal
+        title={`测试规则: ${calcTestModal.rule?.name || ''}`}
+        open={calcTestModal.visible}
+        onCancel={() => setCalcTestModal({ visible: false, rule: null })}
+        footer={[
+          <Button key="cancel" onClick={() => setCalcTestModal({ visible: false, rule: null })}>
+            关闭
+          </Button>,
+          <Button 
+            key="test" 
+            type="primary" 
+            onClick={handleTestCalcRule}
+            loading={testCalcRuleMutation.isPending}
+          >
+            执行测试
+          </Button>,
+        ]}
+        width={600}
+      >
+        {calcTestModal.rule && (
+          <>
+            <div style={{ marginBottom: 16 }}>
+              <Text strong>公式:</Text>
+              <div style={{ background: '#1e293b', padding: 12, borderRadius: 4, marginTop: 8 }}>
+                <code>{calcTestModal.rule.formula}</code>
+              </div>
+            </div>
+            
+            <div style={{ marginBottom: 16 }}>
+              <Text strong>输入参数:</Text>
+              <div style={{ marginTop: 8 }}>
+                {calcTestModal.rule.input_params.map(param => (
+                  <div key={param} style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Tag>{param}</Tag>
+                    <InputNumber
+                      style={{ flex: 1 }}
+                      placeholder={`输入 ${param} 的值`}
+                      value={calcTestInputs[param] ? Number(calcTestInputs[param]) : undefined}
+                      onChange={(value) => setCalcTestInputs(prev => ({ ...prev, [param]: String(value || '') }))}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+            
+            {calcTestResult && (
+              <div>
+                <Text strong>计算结果:</Text>
+                <div style={{ background: '#1e293b', padding: 12, borderRadius: 4, marginTop: 8 }}>
+                  <pre style={{ margin: 0, color: '#22c55e' }}>{calcTestResult}</pre>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </Modal>
     </div>

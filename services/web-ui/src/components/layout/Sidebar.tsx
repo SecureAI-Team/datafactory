@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -13,6 +13,9 @@ import {
   Settings,
   ChevronDown,
   ChevronRight,
+  Download,
+  Check,
+  X,
 } from 'lucide-react'
 import { conversationsApi } from '../../api/conversations'
 import { useConversationStore, Conversation } from '../../store/conversationStore'
@@ -31,6 +34,9 @@ function ConversationGroup({ title, conversations, defaultOpen = true }: Convers
   const { conversationId } = useParams()
   const queryClient = useQueryClient()
   const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const renameInputRef = useRef<HTMLInputElement>(null)
   
   const deleteMutation = useMutation({
     mutationFn: conversationsApi.delete,
@@ -54,6 +60,15 @@ function ConversationGroup({ title, conversations, defaultOpen = true }: Convers
     },
   })
   
+  const renameMutation = useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string }) =>
+      conversationsApi.update(id, { title }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['conversations'] })
+      setRenamingId(null)
+    },
+  })
+  
   if (conversations.length === 0) return null
   
   const handleContextMenu = (e: React.MouseEvent, id: string) => {
@@ -62,6 +77,45 @@ function ConversationGroup({ title, conversations, defaultOpen = true }: Convers
   }
   
   const closeContextMenu = () => setContextMenu(null)
+  
+  const startRename = (conv: Conversation) => {
+    setRenamingId(conv.conversation_id)
+    setRenameValue(conv.title || '')
+    closeContextMenu()
+    setTimeout(() => renameInputRef.current?.focus(), 50)
+  }
+  
+  const confirmRename = () => {
+    if (renamingId && renameValue.trim()) {
+      renameMutation.mutate({ id: renamingId, title: renameValue.trim() })
+    } else {
+      setRenamingId(null)
+    }
+  }
+  
+  const cancelRename = () => {
+    setRenamingId(null)
+    setRenameValue('')
+  }
+  
+  const handleExport = async (convId: string) => {
+    try {
+      const result = await conversationsApi.export(convId, 'markdown')
+      // Create download link
+      const blob = new Blob([result.content], { type: 'text/markdown' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = result.filename || `conversation-${convId}.md`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Export failed:', error)
+    }
+    closeContextMenu()
+  }
   
   return (
     <div className="mb-4">
@@ -79,7 +133,7 @@ function ConversationGroup({ title, conversations, defaultOpen = true }: Convers
           {conversations.map((conv) => (
             <div
               key={conv.conversation_id}
-              onClick={() => navigate(`/c/${conv.conversation_id}`)}
+              onClick={() => renamingId !== conv.conversation_id && navigate(`/c/${conv.conversation_id}`)}
               onContextMenu={(e) => handleContextMenu(e, conv.conversation_id)}
               className={clsx(
                 'group flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer',
@@ -88,19 +142,51 @@ function ConversationGroup({ title, conversations, defaultOpen = true }: Convers
               )}
             >
               <MessageSquare size={16} className="shrink-0 text-dark-400" />
-              <span className="flex-1 truncate text-sm">
-                {conv.title || '新对话'}
-              </span>
-              {conv.is_pinned && <Pin size={12} className="text-primary-400" />}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handleContextMenu(e, conv.conversation_id)
-                }}
-                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-dark-700 rounded"
-              >
-                <MoreHorizontal size={14} />
-              </button>
+              
+              {renamingId === conv.conversation_id ? (
+                /* Inline rename input */
+                <div className="flex-1 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    ref={renameInputRef}
+                    type="text"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') confirmRename()
+                      if (e.key === 'Escape') cancelRename()
+                    }}
+                    className="flex-1 bg-dark-700 border border-primary-500 rounded px-2 py-0.5 text-sm focus:outline-none"
+                  />
+                  <button 
+                    onClick={confirmRename}
+                    className="p-1 hover:bg-dark-600 rounded text-green-400"
+                  >
+                    <Check size={14} />
+                  </button>
+                  <button 
+                    onClick={cancelRename}
+                    className="p-1 hover:bg-dark-600 rounded text-red-400"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <span className="flex-1 truncate text-sm">
+                    {conv.title || '新对话'}
+                  </span>
+                  {conv.is_pinned && <Pin size={12} className="text-primary-400" />}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleContextMenu(e, conv.conversation_id)
+                    }}
+                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-dark-700 rounded"
+                  >
+                    <MoreHorizontal size={14} />
+                  </button>
+                </>
+              )}
             </div>
           ))}
         </div>
@@ -116,8 +202,8 @@ function ConversationGroup({ title, conversations, defaultOpen = true }: Convers
           >
             <button
               onClick={() => {
-                // TODO: Implement rename
-                closeContextMenu()
+                const conv = conversations.find((c) => c.conversation_id === contextMenu.id)
+                if (conv) startRename(conv)
               }}
               className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-dark-700"
             >
@@ -143,6 +229,12 @@ function ConversationGroup({ title, conversations, defaultOpen = true }: Convers
               className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-dark-700"
             >
               <Archive size={14} /> 归档
+            </button>
+            <button
+              onClick={() => handleExport(contextMenu.id)}
+              className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-dark-700"
+            >
+              <Download size={14} /> 导出会话
             </button>
             <div className="h-px bg-dark-700 my-1" />
             <button

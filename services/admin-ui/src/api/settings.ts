@@ -135,6 +135,42 @@ export const settingsApi = {
     const response = await apiClient.put(`/api/config/features/${key}`, { enabled })
     return response.data
   },
+
+  // General LLM Params
+  updateLLMGeneralParams: async (params: {
+    temperature?: number
+    max_tokens?: number
+    timeout?: number
+    retries?: number
+  }): Promise<void> => {
+    // Update multiple system configs
+    const updates = [
+      { group: 'llm', key: 'default_temperature', value: params.temperature?.toString() },
+      { group: 'llm', key: 'default_max_tokens', value: params.max_tokens?.toString() },
+      { group: 'llm', key: 'request_timeout', value: params.timeout?.toString() },
+      { group: 'llm', key: 'retry_attempts', value: params.retries?.toString() },
+    ].filter(u => u.value !== undefined)
+    
+    await Promise.all(
+      updates.map(u => apiClient.put(`/api/config/system/${u.group}/${u.key}`, { value: u.value }))
+    )
+  },
+
+  // Config Sync
+  syncConfigs: async (): Promise<{ synced: number; message: string }> => {
+    const response = await apiClient.post('/api/config/sync')
+    return response.data
+  },
+
+  getConfigComparison: async (): Promise<{ comparisons: Array<{ key: string; env_value: string; db_value: string; in_sync: boolean }> }> => {
+    const response = await apiClient.get('/api/config/sync/compare')
+    return response.data
+  },
+
+  exportConfigs: async (): Promise<{ content: string }> => {
+    const response = await apiClient.get('/api/config/export')
+    return response.data
+  },
 }
 
 export default settingsApi

@@ -1,14 +1,16 @@
-import { Card, Typography, Table, Row, Col, Statistic, Progress, Spin, Tag, Tabs } from 'antd'
+import { useState } from 'react'
+import { Card, Typography, Table, Row, Col, Statistic, Progress, Spin, Tag, Tabs, Modal, Form, Input, Select, message } from 'antd'
 import { 
   CheckCircleOutlined, 
   ExclamationCircleOutlined, 
   LineChartOutlined,
   ThunderboltOutlined 
 } from '@ant-design/icons'
-import { useQuery } from '@tanstack/react-query'
-import { statsApi } from '../api'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { statsApi, tasksApi } from '../api'
 
 const { Title, Text } = Typography
+const { TextArea } = Input
 
 function QualityOverview() {
   const { data: qualityData, isLoading } = useQuery({
@@ -120,13 +122,63 @@ function QualityOverview() {
   )
 }
 
+interface FeedbackItem {
+  id: string
+  query: string
+  feedback: string
+  reason: string
+  date: string
+  conversation_id?: string
+}
+
 function FeedbackAnalysis() {
-  // Placeholder for feedback analysis
-  const mockFeedback = [
-    { query: 'AOI8000 精度是多少？', feedback: 'positive', reason: '答案准确', date: '2024-01-20' },
-    { query: '有没有汽车行业案例？', feedback: 'negative', reason: '找不到相关案例', date: '2024-01-19' },
-    { query: '产品报价单在哪？', feedback: 'negative', reason: '回答不完整', date: '2024-01-18' },
-  ]
+  const queryClient = useQueryClient()
+  const [taskModal, setTaskModal] = useState<{ visible: boolean; item: FeedbackItem | null }>({
+    visible: false,
+    item: null,
+  })
+  const [taskForm] = Form.useForm()
+  
+  // Fetch feedback data - using stats API
+  const { data: feedbackStats, isLoading } = useQuery({
+    queryKey: ['feedback-stats'],
+    queryFn: () => statsApi.getFeedback(),
+  })
+  
+  // Create task mutation
+  const createTaskMutation = useMutation({
+    mutationFn: tasksApi.create,
+    onSuccess: () => {
+      message.success('优化任务已创建')
+      setTaskModal({ visible: false, item: null })
+      taskForm.resetFields()
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+    },
+    onError: () => message.error('创建任务失败'),
+  })
+  
+  const handleCreateTask = (item: FeedbackItem) => {
+    setTaskModal({ visible: true, item })
+    taskForm.setFieldsValue({
+      title: `优化反馈: ${item.query.substring(0, 30)}...`,
+      description: `用户问题: ${item.query}\n反馈原因: ${item.reason}`,
+      task_type: 'review_ku',
+      priority: 'normal',
+    })
+  }
+  
+  const handleSubmitTask = () => {
+    taskForm.validateFields().then((values) => {
+      createTaskMutation.mutate({
+        ...values,
+        related_type: 'feedback',
+        related_id: taskModal.item?.id ? parseInt(taskModal.item.id) : undefined,
+      })
+    })
+  }
+  
+  // Use API data
+  const negativeFeedback: FeedbackItem[] = feedbackStats?.negative_feedback ?? []
   
   const columns = [
     { title: '问题', dataIndex: 'query', key: 'query', ellipsis: true },
@@ -145,49 +197,133 @@ function FeedbackAnalysis() {
     {
       title: '操作',
       key: 'actions',
-      render: () => <a>创建优化任务</a>,
+      render: (_: unknown, record: FeedbackItem) => (
+        <a onClick={() => handleCreateTask(record)}>创建优化任务</a>
+      ),
     },
   ]
   
   return (
     <div>
-      <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={8}>
-          <Card>
-            <Statistic title="正面反馈" value={85} suffix="%" valueStyle={{ color: '#22c55e' }} />
-          </Card>
-        </Col>
-        <Col span={8}>
-          <Card>
-            <Statistic title="负面反馈" value={15} suffix="%" valueStyle={{ color: '#ef4444' }} />
-          </Card>
-        </Col>
-        <Col span={8}>
-          <Card>
-            <Statistic title="待处理反馈" value={12} />
-          </Card>
-        </Col>
-      </Row>
+      <Spin spinning={isLoading}>
+        <Row gutter={16} style={{ marginBottom: 24 }}>
+          <Col span={8}>
+            <Card>
+              <Statistic 
+                title="正面反馈" 
+                value={feedbackStats?.positive_rate ?? 85} 
+                suffix="%" 
+                valueStyle={{ color: '#22c55e' }} 
+              />
+            </Card>
+          </Col>
+          <Col span={8}>
+            <Card>
+              <Statistic 
+                title="负面反馈" 
+                value={feedbackStats?.negative_rate ?? 15} 
+                suffix="%" 
+                valueStyle={{ color: '#ef4444' }} 
+              />
+            </Card>
+          </Col>
+          <Col span={8}>
+            <Card>
+              <Statistic 
+                title="待处理反馈" 
+                value={feedbackStats?.pending_count ?? 12} 
+              />
+            </Card>
+          </Col>
+        </Row>
+        
+        <Card title="负面反馈列表">
+          <Table 
+            dataSource={negativeFeedback} 
+            columns={columns} 
+            rowKey="id"
+            pagination={{ pageSize: 10 }}
+            locale={{ emptyText: '暂无负面反馈' }}
+          />
+        </Card>
+      </Spin>
       
-      <Card title="负面反馈列表">
-        <Table 
-          dataSource={mockFeedback.filter(f => f.feedback === 'negative')} 
-          columns={columns} 
-          rowKey="query"
-          pagination={false}
-        />
-      </Card>
+      {/* Create Task Modal */}
+      <Modal
+        title="创建优化任务"
+        open={taskModal.visible}
+        onCancel={() => setTaskModal({ visible: false, item: null })}
+        onOk={handleSubmitTask}
+        confirmLoading={createTaskMutation.isPending}
+      >
+        <Form form={taskForm} layout="vertical">
+          <Form.Item 
+            label="任务标题" 
+            name="title" 
+            rules={[{ required: true, message: '请输入任务标题' }]}
+          >
+            <Input />
+          </Form.Item>
+          
+          <Form.Item 
+            label="任务描述" 
+            name="description"
+          >
+            <TextArea rows={4} />
+          </Form.Item>
+          
+          <Form.Item label="任务类型" name="task_type">
+            <Select>
+              <Select.Option value="review_ku">审核 KU</Select.Option>
+              <Select.Option value="request_info">请求信息</Select.Option>
+              <Select.Option value="verify_content">验证内容</Select.Option>
+            </Select>
+          </Form.Item>
+          
+          <Form.Item label="优先级" name="priority">
+            <Select>
+              <Select.Option value="low">低</Select.Option>
+              <Select.Option value="normal">普通</Select.Option>
+              <Select.Option value="high">高</Select.Option>
+              <Select.Option value="urgent">紧急</Select.Option>
+            </Select>
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   )
 }
 
+interface DQRunItem {
+  id: number
+  ku_id: string
+  passed: boolean
+  reasons: string[]
+  date: string
+  details?: {
+    title?: string
+    ku_type?: string
+    checks?: { name: string; passed: boolean; message?: string }[]
+  }
+}
+
 function DQReport() {
-  // Placeholder for DQ report
-  const mockDQRuns = [
-    { id: 1, ku_id: 'KU-1234', passed: false, reasons: ['缺少必填标签'], date: '2024-01-20 10:30' },
-    { id: 2, ku_id: 'KU-1235', passed: true, reasons: [], date: '2024-01-20 09:15' },
-    { id: 3, ku_id: 'KU-1236', passed: false, reasons: ['内容长度不足'], date: '2024-01-19 16:45' },
-  ]
+  const [detailModal, setDetailModal] = useState<{ visible: boolean; item: DQRunItem | null }>({
+    visible: false,
+    item: null,
+  })
+  
+  // Fetch DQ runs from API
+  const { data: dqData, isLoading } = useQuery({
+    queryKey: ['dq-runs'],
+    queryFn: () => statsApi.getDQRuns({ limit: 20 }),
+  })
+  
+  const dqRuns = dqData?.runs ?? []
+  
+  const handleViewDetails = (record: DQRunItem) => {
+    setDetailModal({ visible: true, item: record })
+  }
   
   const columns = [
     { title: 'KU ID', dataIndex: 'ku_id', key: 'ku_id' },
@@ -211,22 +347,72 @@ function DQReport() {
     {
       title: '操作',
       key: 'actions',
-      render: (_: unknown, record: { passed: boolean }) => (
-        record.passed ? '-' : <a>查看详情</a>
+      render: (_: unknown, record: DQRunItem) => (
+        record.passed ? '-' : <a onClick={() => handleViewDetails(record)}>查看详情</a>
       ),
     },
   ]
   
   return (
     <div>
-      <Card title="DQ 检查记录" extra={<a>查看全部</a>}>
-        <Table 
-          dataSource={mockDQRuns} 
-          columns={columns} 
-          rowKey="id"
-          pagination={false}
-        />
-      </Card>
+      <Spin spinning={isLoading}>
+        <Card title="DQ 检查记录" extra={<a href="/quality">查看全部</a>}>
+          <Table 
+            dataSource={dqRuns} 
+            columns={columns} 
+            rowKey="id"
+            pagination={{ pageSize: 10 }}
+            locale={{ emptyText: '暂无 DQ 检查记录' }}
+          />
+        </Card>
+      </Spin>
+      
+      {/* DQ Details Modal */}
+      <Modal
+        title={`DQ 检查详情 - ${detailModal.item?.ku_id || ''}`}
+        open={detailModal.visible}
+        onCancel={() => setDetailModal({ visible: false, item: null })}
+        footer={null}
+        width={600}
+      >
+        {detailModal.item?.details && (
+          <div>
+            <p><strong>标题:</strong> {detailModal.item.details.title}</p>
+            <p><strong>类型:</strong> {detailModal.item.details.ku_type}</p>
+            <p><strong>检查时间:</strong> {detailModal.item.date}</p>
+            
+            <div style={{ marginTop: 16 }}>
+              <Text strong>检查项列表:</Text>
+              <Table
+                dataSource={detailModal.item.details.checks}
+                columns={[
+                  { title: '检查项', dataIndex: 'name', key: 'name' },
+                  { 
+                    title: '结果', 
+                    dataIndex: 'passed', 
+                    key: 'passed',
+                    render: (passed: boolean) => (
+                      passed ? 
+                        <Tag color="green">✓ 通过</Tag> :
+                        <Tag color="red">✗ 失败</Tag>
+                    ),
+                  },
+                  { 
+                    title: '说明', 
+                    dataIndex: 'message', 
+                    key: 'message',
+                    render: (msg: string) => msg || '-',
+                  },
+                ]}
+                rowKey="name"
+                pagination={false}
+                size="small"
+                style={{ marginTop: 8 }}
+              />
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

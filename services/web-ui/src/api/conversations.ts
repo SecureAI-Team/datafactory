@@ -138,5 +138,29 @@ export const conversationsApi = {
     )
     return response.data
   },
+  
+  // Export conversation
+  export: async (conversationId: string, format: 'markdown' | 'pdf' = 'markdown'): Promise<{ content: string; filename: string }> => {
+    try {
+      const response = await apiClient.get<{ content: string; filename: string }>(
+        `/api/conversations/${conversationId}/export?format=${format}`
+      )
+      return response.data
+    } catch {
+      // Fallback: generate markdown locally if API not available
+      const messagesResponse = await apiClient.get<{ messages: Message[] }>(
+        `/api/conversations/${conversationId}/messages`
+      )
+      const messages = messagesResponse.data.messages || []
+      const content = messages.map(m => {
+        const role = m.role === 'user' ? '**用户**' : '**助手**'
+        return `${role}\n\n${m.content}\n\n---\n`
+      }).join('\n')
+      return {
+        content: `# 对话导出\n\n导出时间: ${new Date().toLocaleString()}\n\n---\n\n${content}`,
+        filename: `conversation-${conversationId}.md`
+      }
+    }
+  },
 }
 

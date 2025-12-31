@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   Upload,
@@ -158,6 +159,7 @@ function ContributionItem({ contribution }: { contribution: Contribution }) {
 }
 
 export default function MyData() {
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<'contributions' | 'achievements'>('contributions')
   const { user } = useAuthStore()
 
@@ -218,7 +220,7 @@ export default function MyData() {
             <h1 className="text-2xl font-bold">我的资料</h1>
             <p className="text-dark-400 mt-1">查看您的贡献和成就</p>
           </div>
-          <button className="btn-primary">
+          <button onClick={() => navigate('/upload')} className="btn-primary">
             <Upload size={18} />
             上传材料
           </button>
@@ -308,7 +310,7 @@ export default function MyData() {
               <div className="p-8 text-center text-dark-400">
                 <FileText className="mx-auto mb-2 opacity-50" size={48} />
                 <p className="mb-4">您还没有贡献任何资料</p>
-                <button className="btn-primary">
+                <button onClick={() => navigate('/upload')} className="btn-primary">
                   <Upload size={18} />
                   上传第一份资料
                 </button>

@@ -12,6 +12,7 @@ import {
   MenuUnfoldOutlined,
   CheckSquareOutlined,
   LineChartOutlined,
+  MergeCellsOutlined,
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 
@@ -31,6 +32,11 @@ const menuItems: MenuProps['items'] = [
     key: '/review',
     icon: <FileSearchOutlined />,
     label: '贡献审核',
+  },
+  {
+    key: '/dedup',
+    icon: <MergeCellsOutlined />,
+    label: '去重工作台',
   },
   {
     key: '/tasks',
@@ -76,6 +82,7 @@ export default function AdminLayout({ onLogout }: AdminLayoutProps) {
       key: 'profile',
       icon: <UserOutlined />,
       label: '个人信息',
+      onClick: () => navigate('/settings'),
     },
     {
       type: 'divider',

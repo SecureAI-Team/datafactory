@@ -8,7 +8,7 @@ from sqlalchemy import desc
 
 from ..db import get_db
 from ..models.user import User
-from ..models.config import ScenarioConfig, PromptTemplate, PromptHistory, KUTypeDefinition
+from ..models.config import ScenarioConfig, PromptTemplate, PromptHistory, KUTypeDefinition, ParameterDefinition, CalculationRule
 from .auth import get_current_user, require_role
 
 router = APIRouter(prefix="/api/config", tags=["config"])
@@ -639,4 +639,378 @@ async def delete_ku_type(
     db.commit()
     
     return {"message": "KU type deactivated", "type_code": type_code}
+
+
+# ==================== Parameter Definition Models ====================
+
+class ParameterCreateRequest(BaseModel):
+    name: str
+    code: str
+    data_type: str  # string/number/boolean/array
+    unit: Optional[str] = None
+    category: Optional[str] = None
+    synonyms: Optional[List[str]] = []
+    validation_rules: Optional[dict] = {}
+    description: Optional[str] = None
+    is_system: bool = False
+
+
+class ParameterUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    data_type: Optional[str] = None
+    unit: Optional[str] = None
+    category: Optional[str] = None
+    synonyms: Optional[List[str]] = None
+    validation_rules: Optional[dict] = None
+    description: Optional[str] = None
+
+
+# ==================== Parameter Definition Endpoints ====================
+
+@router.get("/parameters")
+async def get_parameters(
+    category: Optional[str] = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取参数定义列表"""
+    query = db.query(ParameterDefinition)
+    
+    if category:
+        query = query.filter(ParameterDefinition.category == category)
+    
+    parameters = query.order_by(ParameterDefinition.category, ParameterDefinition.name).all()
+    
+    return {"parameters": [p.to_dict() for p in parameters]}
+
+
+@router.get("/parameters/{param_id}")
+async def get_parameter(
+    param_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取单个参数定义"""
+    param = db.query(ParameterDefinition).filter(ParameterDefinition.id == param_id).first()
+    
+    if not param:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Parameter not found"
+        )
+    
+    return param.to_dict()
+
+
+@router.post("/parameters")
+async def create_parameter(
+    body: ParameterCreateRequest,
+    admin: User = Depends(require_role("admin", "data_ops")),
+    db: Session = Depends(get_db)
+):
+    """创建参数定义"""
+    # Check for duplicate code
+    existing = db.query(ParameterDefinition).filter(
+        ParameterDefinition.code == body.code
+    ).first()
+    
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Parameter code already exists"
+        )
+    
+    param = ParameterDefinition(
+        name=body.name,
+        code=body.code,
+        data_type=body.data_type,
+        unit=body.unit,
+        category=body.category,
+        synonyms=body.synonyms or [],
+        validation_rules=body.validation_rules or {},
+        description=body.description,
+        is_system=body.is_system,
+        updated_by=admin.id,
+    )
+    
+    db.add(param)
+    db.commit()
+    db.refresh(param)
+    
+    return {"message": "Parameter created", "parameter": param.to_dict()}
+
+
+@router.put("/parameters/{param_id}")
+async def update_parameter(
+    param_id: int,
+    body: ParameterUpdateRequest,
+    admin: User = Depends(require_role("admin", "data_ops")),
+    db: Session = Depends(get_db)
+):
+    """更新参数定义"""
+    param = db.query(ParameterDefinition).filter(ParameterDefinition.id == param_id).first()
+    
+    if not param:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Parameter not found"
+        )
+    
+    # System parameters can only be updated by admin
+    if param.is_system and admin.role != 'admin':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="System parameters can only be modified by admin"
+        )
+    
+    if body.name is not None:
+        param.name = body.name
+    if body.data_type is not None:
+        param.data_type = body.data_type
+    if body.unit is not None:
+        param.unit = body.unit
+    if body.category is not None:
+        param.category = body.category
+    if body.synonyms is not None:
+        param.synonyms = body.synonyms
+    if body.validation_rules is not None:
+        param.validation_rules = body.validation_rules
+    if body.description is not None:
+        param.description = body.description
+    
+    param.updated_by = admin.id
+    db.commit()
+    db.refresh(param)
+    
+    return {"message": "Parameter updated", "parameter": param.to_dict()}
+
+
+@router.delete("/parameters/{param_id}")
+async def delete_parameter(
+    param_id: int,
+    admin: User = Depends(require_role("admin")),
+    db: Session = Depends(get_db)
+):
+    """删除参数定义"""
+    param = db.query(ParameterDefinition).filter(ParameterDefinition.id == param_id).first()
+    
+    if not param:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Parameter not found"
+        )
+    
+    if param.is_system:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete system parameters"
+        )
+    
+    db.delete(param)
+    db.commit()
+    
+    return {"message": "Parameter deleted", "id": param_id}
+
+
+# ==================== Calculation Rule Models ====================
+
+class CalcRuleCreateRequest(BaseModel):
+    name: str
+    code: str
+    description: Optional[str] = None
+    formula: str
+    input_params: Optional[List[str]] = []
+    output_type: str = "number"
+    examples: Optional[List[dict]] = []
+    is_active: bool = True
+
+
+class CalcRuleUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    formula: Optional[str] = None
+    input_params: Optional[List[str]] = None
+    output_type: Optional[str] = None
+    examples: Optional[List[dict]] = None
+    is_active: Optional[bool] = None
+
+
+class CalcRuleTestRequest(BaseModel):
+    inputs: dict
+
+
+# ==================== Calculation Rule Endpoints ====================
+
+@router.get("/calc-rules")
+async def get_calc_rules(
+    is_active: Optional[bool] = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取计算规则列表"""
+    query = db.query(CalculationRule)
+    
+    if is_active is not None:
+        query = query.filter(CalculationRule.is_active == is_active)
+    
+    rules = query.order_by(CalculationRule.name).all()
+    
+    return {"rules": [r.to_dict() for r in rules]}
+
+
+@router.get("/calc-rules/{rule_id}")
+async def get_calc_rule(
+    rule_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取单个计算规则"""
+    rule = db.query(CalculationRule).filter(CalculationRule.id == rule_id).first()
+    
+    if not rule:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Calculation rule not found"
+        )
+    
+    return rule.to_dict()
+
+
+@router.post("/calc-rules")
+async def create_calc_rule(
+    body: CalcRuleCreateRequest,
+    admin: User = Depends(require_role("admin", "data_ops")),
+    db: Session = Depends(get_db)
+):
+    """创建计算规则"""
+    # Check for duplicate code
+    existing = db.query(CalculationRule).filter(
+        CalculationRule.code == body.code
+    ).first()
+    
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Calculation rule code already exists"
+        )
+    
+    rule = CalculationRule(
+        name=body.name,
+        code=body.code,
+        description=body.description,
+        formula=body.formula,
+        input_params=body.input_params or [],
+        output_type=body.output_type,
+        examples=body.examples or [],
+        is_active=body.is_active,
+        updated_by=admin.id,
+    )
+    
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    
+    return {"message": "Calculation rule created", "rule": rule.to_dict()}
+
+
+@router.put("/calc-rules/{rule_id}")
+async def update_calc_rule(
+    rule_id: int,
+    body: CalcRuleUpdateRequest,
+    admin: User = Depends(require_role("admin", "data_ops")),
+    db: Session = Depends(get_db)
+):
+    """更新计算规则"""
+    rule = db.query(CalculationRule).filter(CalculationRule.id == rule_id).first()
+    
+    if not rule:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Calculation rule not found"
+        )
+    
+    if body.name is not None:
+        rule.name = body.name
+    if body.description is not None:
+        rule.description = body.description
+    if body.formula is not None:
+        rule.formula = body.formula
+    if body.input_params is not None:
+        rule.input_params = body.input_params
+    if body.output_type is not None:
+        rule.output_type = body.output_type
+    if body.examples is not None:
+        rule.examples = body.examples
+    if body.is_active is not None:
+        rule.is_active = body.is_active
+    
+    rule.updated_by = admin.id
+    db.commit()
+    db.refresh(rule)
+    
+    return {"message": "Calculation rule updated", "rule": rule.to_dict()}
+
+
+@router.delete("/calc-rules/{rule_id}")
+async def delete_calc_rule(
+    rule_id: int,
+    admin: User = Depends(require_role("admin")),
+    db: Session = Depends(get_db)
+):
+    """删除计算规则"""
+    rule = db.query(CalculationRule).filter(CalculationRule.id == rule_id).first()
+    
+    if not rule:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Calculation rule not found"
+        )
+    
+    db.delete(rule)
+    db.commit()
+    
+    return {"message": "Calculation rule deleted", "id": rule_id}
+
+
+@router.post("/calc-rules/{rule_id}/test")
+async def test_calc_rule(
+    rule_id: int,
+    body: CalcRuleTestRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """测试计算规则"""
+    rule = db.query(CalculationRule).filter(CalculationRule.id == rule_id).first()
+    
+    if not rule:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Calculation rule not found"
+        )
+    
+    try:
+        # Simple formula evaluation (in production, use a safer eval method)
+        # Create a namespace with the input values
+        namespace = body.inputs.copy()
+        
+        # Add basic math functions
+        import math
+        namespace.update({
+            'min': min,
+            'max': max,
+            'abs': abs,
+            'round': round,
+            'sum': sum,
+            'pow': pow,
+            'sqrt': math.sqrt,
+            'floor': math.floor,
+            'ceil': math.ceil,
+        })
+        
+        # Evaluate the formula
+        result = eval(rule.formula, {"__builtins__": {}}, namespace)
+        
+        return {"success": True, "result": result, "formula": rule.formula, "inputs": body.inputs}
+    except Exception as e:
+        return {"success": False, "error": str(e), "formula": rule.formula, "inputs": body.inputs}
 

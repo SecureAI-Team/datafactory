@@ -55,6 +55,38 @@ export interface UsageStats {
   daily_active_users: Array<{ date: string; count: number }>
 }
 
+export interface FeedbackStats {
+  positive_rate: number
+  negative_rate: number
+  pending_count: number
+  total_feedback: number
+  negative_feedback: Array<{
+    id: string
+    query: string
+    feedback: string
+    reason: string
+    date: string
+    conversation_id?: string
+  }>
+}
+
+export interface DQRunItem {
+  id: number
+  ku_id: string
+  passed: boolean
+  reasons: string[]
+  date: string
+  details?: {
+    title?: string
+    ku_type?: string
+    checks?: Array<{ name: string; passed: boolean; message?: string }>
+  }
+}
+
+export interface DQRunsResponse {
+  runs: DQRunItem[]
+}
+
 export const statsApi = {
   getOverview: async (): Promise<OverviewStats> => {
     const response = await apiClient.get('/api/stats/overview')
@@ -83,6 +115,16 @@ export const statsApi = {
 
   getUsage: async (days: number = 7): Promise<UsageStats> => {
     const response = await apiClient.get('/api/stats/usage', { params: { days } })
+    return response.data
+  },
+
+  getFeedback: async (days: number = 30): Promise<FeedbackStats> => {
+    const response = await apiClient.get('/api/stats/feedback', { params: { days } })
+    return response.data
+  },
+
+  getDQRuns: async (params?: { limit?: number; passed?: boolean }): Promise<DQRunsResponse> => {
+    const response = await apiClient.get('/api/stats/dq-runs', { params })
     return response.data
   },
 }

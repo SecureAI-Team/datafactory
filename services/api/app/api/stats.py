@@ -1,4 +1,5 @@
 """Statistics and dashboard API endpoints"""
+import json
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends
@@ -352,5 +353,121 @@ async def get_usage_stats(
         "daily_conversations": [{"date": str(d), "count": c} for d, c in daily_conversations],
         "daily_messages": [{"date": str(d), "count": c} for d, c in daily_messages],
         "daily_active_users": [{"date": str(d), "count": c} for d, c in daily_users]
+    }
+
+
+# ==================== Feedback Stats ====================
+
+@router.get("/feedback")
+async def get_feedback_stats(
+    days: int = 30,
+    admin: User = Depends(require_role("admin", "data_ops")),
+    db: Session = Depends(get_db)
+):
+    """获取反馈统计"""
+    start_date = datetime.now(timezone.utc) - timedelta(days=days)
+    
+    # Get feedback counts
+    positive_count = db.query(func.count(ConversationMessage.id)).filter(
+        ConversationMessage.feedback == 'positive',
+        ConversationMessage.created_at >= start_date
+    ).scalar() or 0
+    
+    negative_count = db.query(func.count(ConversationMessage.id)).filter(
+        ConversationMessage.feedback == 'negative',
+        ConversationMessage.created_at >= start_date
+    ).scalar() or 0
+    
+    total_feedback = positive_count + negative_count
+    
+    # Get negative feedback details
+    negative_messages = db.query(ConversationMessage).filter(
+        ConversationMessage.feedback == 'negative',
+        ConversationMessage.created_at >= start_date
+    ).order_by(ConversationMessage.created_at.desc()).limit(50).all()
+    
+    negative_feedback_list = []
+    for msg in negative_messages:
+        # Get the previous user message as the query
+        prev_msg = db.query(ConversationMessage).filter(
+            ConversationMessage.conversation_id == msg.conversation_id,
+            ConversationMessage.role == 'user',
+            ConversationMessage.created_at < msg.created_at
+        ).order_by(ConversationMessage.created_at.desc()).first()
+        
+        negative_feedback_list.append({
+            "id": str(msg.id),
+            "query": prev_msg.content[:100] if prev_msg else "未知问题",
+            "feedback": "negative",
+            "reason": msg.feedback_text or "用户未说明原因",
+            "date": msg.created_at.strftime("%Y-%m-%d") if msg.created_at else "",
+            "conversation_id": msg.conversation_id,
+        })
+    
+    return {
+        "positive_rate": round((positive_count / total_feedback * 100) if total_feedback > 0 else 0, 1),
+        "negative_rate": round((negative_count / total_feedback * 100) if total_feedback > 0 else 0, 1),
+        "pending_count": len(negative_feedback_list),  # Count of negative feedback to process
+        "total_feedback": total_feedback,
+        "negative_feedback": negative_feedback_list
+    }
+
+
+# ==================== DQ Runs ====================
+
+@router.get("/dq-runs")
+async def get_dq_runs(
+    limit: int = 20,
+    passed: Optional[bool] = None,
+    admin: User = Depends(require_role("admin", "data_ops")),
+    db: Session = Depends(get_db)
+):
+    """获取 DQ 检查记录"""
+    query = db.query(DQRun)
+    
+    if passed is not None:
+        query = query.filter(DQRun.passed == passed)
+    
+    dq_runs = query.order_by(desc(DQRun.run_at)).limit(limit).all()
+    
+    runs_list = []
+    for run in dq_runs:
+        # Get KU info
+        ku = db.query(KnowledgeUnit).filter(KnowledgeUnit.id == run.ku_id).first()
+        
+        # Parse reasons from JSON
+        reasons = []
+        checks = []
+        if run.check_results:
+            try:
+                results = run.check_results if isinstance(run.check_results, dict) else json.loads(run.check_results)
+                for check_name, check_result in results.items():
+                    check_passed = check_result.get('passed', True) if isinstance(check_result, dict) else bool(check_result)
+                    check_msg = check_result.get('message', '') if isinstance(check_result, dict) else ''
+                    checks.append({
+                        "name": check_name,
+                        "passed": check_passed,
+                        "message": check_msg
+                    })
+                    if not check_passed:
+                        reasons.append(check_msg or check_name)
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        
+        runs_list.append({
+            "id": run.id,
+            "ku_id": f"KU-{run.ku_id}",
+            "passed": run.passed,
+            "reasons": reasons,
+            "date": run.run_at.strftime("%Y-%m-%d %H:%M") if run.run_at else "",
+            "details": {
+                "title": ku.title if ku else "未知",
+                "ku_type": ku.ku_type if ku else "",
+                "checks": checks
+            } if not run.passed else None
+        })
+    
+    return {
+        "runs": runs_list
     }
 

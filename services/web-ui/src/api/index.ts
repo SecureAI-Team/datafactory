@@ -7,14 +7,7 @@ export { scenariosApi } from './scenarios'
 
 // Type exports
 export type { LoginRequest, RegisterRequest, UserProfile, AuthResponse } from './auth'
-export type { 
-  Conversation, 
-  ConversationGroup, 
-  ConversationMessage, 
-  CreateMessageRequest,
-  CreateMessageResponse,
-  ConversationsListResponse 
-} from './conversations'
+export type { Conversation, Message } from '../store/conversationStore'
 export type { 
   Contribution, 
   ContributionStats, 

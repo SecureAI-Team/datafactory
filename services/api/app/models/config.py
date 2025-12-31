@@ -137,3 +137,81 @@ class KUTypeDefinition(Base):
             "is_active": self.is_active,
         }
 
+
+class ParameterDefinition(Base):
+    """参数定义表"""
+    __tablename__ = "parameter_definitions"
+    
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False)
+    code = Column(String(50), unique=True, nullable=False)
+    data_type = Column(String(30), nullable=False)  # string/number/boolean/array
+    unit = Column(String(50))
+    category = Column(String(50))
+    synonyms = Column(JSONB, default=[])  # 同义词列表
+    validation_rules = Column(JSONB, default={})  # 验证规则
+    description = Column(Text)
+    is_system = Column(Boolean, default=False)
+    updated_by = Column(Integer, ForeignKey('users.id'))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    def __repr__(self):
+        return f"<ParameterDefinition {self.code}>"
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "code": self.code,
+            "data_type": self.data_type,
+            "unit": self.unit,
+            "category": self.category,
+            "synonyms": self.synonyms or [],
+            "validation_rules": self.validation_rules or {},
+            "description": self.description,
+            "is_system": self.is_system,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class CalculationRule(Base):
+    """计算规则表"""
+    __tablename__ = "calculation_rules"
+    
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False)
+    code = Column(String(50), unique=True, nullable=False)
+    description = Column(Text)
+    formula = Column(Text, nullable=False)  # 计算公式
+    input_schema = Column(JSONB, default={})  # 输入参数定义
+    output_schema = Column(JSONB, default={})  # 输出定义
+    input_params = Column(JSONB, default=[])  # 输入参数列表
+    output_type = Column(String(30), default='number')  # 输出类型
+    examples = Column(JSONB, default=[])  # 示例 { input: {}, output: value }
+    is_active = Column(Boolean, default=True)
+    updated_by = Column(Integer, ForeignKey('users.id'))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    def __repr__(self):
+        return f"<CalculationRule {self.code}>"
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "code": self.code,
+            "description": self.description,
+            "formula": self.formula,
+            "input_schema": self.input_schema or {},
+            "output_schema": self.output_schema or {},
+            "input_params": self.input_params or [],
+            "output_type": self.output_type,
+            "examples": self.examples or [],
+            "is_active": self.is_active,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+

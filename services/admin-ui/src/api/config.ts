@@ -92,6 +92,60 @@ export interface CreateKUTypeRequest {
   is_active?: boolean
 }
 
+// Parameter Definition types
+export interface ParameterDefinition {
+  id: number
+  name: string
+  code: string
+  data_type: string
+  unit?: string
+  category?: string
+  synonyms: string[]
+  validation_rules?: Record<string, unknown>
+  description?: string
+  is_system: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateParameterRequest {
+  name: string
+  code: string
+  data_type: string
+  unit?: string
+  category?: string
+  synonyms?: string[]
+  validation_rules?: Record<string, unknown>
+  description?: string
+  is_system?: boolean
+}
+
+// Calculation Rule types
+export interface CalculationRule {
+  id: number
+  name: string
+  code: string
+  description?: string
+  formula: string
+  input_params: string[]
+  output_type: string
+  examples?: Array<{ input: Record<string, unknown>; output: unknown }>
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateCalcRuleRequest {
+  name: string
+  code: string
+  description?: string
+  formula: string
+  input_params?: string[]
+  output_type?: string
+  examples?: Array<{ input: Record<string, unknown>; output: unknown }>
+  is_active?: boolean
+}
+
 export const configApi = {
   // Scenarios
   getScenarios: async (): Promise<{ scenarios: Scenario[] }> => {
@@ -150,8 +204,57 @@ export const configApi = {
     return response.data
   },
 
-  updateKUType: async (typeId: number, data: Partial<CreateKUTypeRequest>): Promise<KUType> => {
-    const response = await apiClient.put(`/api/config/ku-types/${typeId}`, data)
+  updateKUType: async (typeCode: string, data: Partial<CreateKUTypeRequest>): Promise<KUType> => {
+    const response = await apiClient.put(`/api/config/ku-types/${typeCode}`, data)
+    return response.data
+  },
+
+  deleteKUType: async (typeCode: string): Promise<void> => {
+    await apiClient.delete(`/api/config/ku-types/${typeCode}`)
+  },
+
+  // Parameters
+  getParameters: async (category?: string): Promise<{ parameters: ParameterDefinition[] }> => {
+    const response = await apiClient.get('/api/config/parameters', { params: category ? { category } : {} })
+    return response.data
+  },
+
+  createParameter: async (data: CreateParameterRequest): Promise<ParameterDefinition> => {
+    const response = await apiClient.post('/api/config/parameters', data)
+    return response.data.parameter
+  },
+
+  updateParameter: async (paramId: number, data: Partial<CreateParameterRequest>): Promise<ParameterDefinition> => {
+    const response = await apiClient.put(`/api/config/parameters/${paramId}`, data)
+    return response.data.parameter
+  },
+
+  deleteParameter: async (paramId: number): Promise<void> => {
+    await apiClient.delete(`/api/config/parameters/${paramId}`)
+  },
+
+  // Calculation Rules
+  getCalcRules: async (isActive?: boolean): Promise<{ rules: CalculationRule[] }> => {
+    const response = await apiClient.get('/api/config/calc-rules', { params: isActive !== undefined ? { is_active: isActive } : {} })
+    return response.data
+  },
+
+  createCalcRule: async (data: CreateCalcRuleRequest): Promise<CalculationRule> => {
+    const response = await apiClient.post('/api/config/calc-rules', data)
+    return response.data.rule
+  },
+
+  updateCalcRule: async (ruleId: number, data: Partial<CreateCalcRuleRequest>): Promise<CalculationRule> => {
+    const response = await apiClient.put(`/api/config/calc-rules/${ruleId}`, data)
+    return response.data.rule
+  },
+
+  deleteCalcRule: async (ruleId: number): Promise<void> => {
+    await apiClient.delete(`/api/config/calc-rules/${ruleId}`)
+  },
+
+  testCalcRule: async (ruleId: number, inputs: Record<string, unknown>): Promise<{ success: boolean; result?: unknown; error?: string }> => {
+    const response = await apiClient.post(`/api/config/calc-rules/${ruleId}/test`, { inputs })
     return response.data
   },
 }

@@ -452,6 +452,77 @@ async def update_feedback(
 
 # ==================== Share Endpoints ====================
 
+# ==================== Export Endpoint ====================
+
+class ExportResponse(BaseModel):
+    content: str
+    filename: str
+
+
+@router.get("/{conversation_id}/export", response_model=ExportResponse)
+async def export_conversation(
+    conversation_id: str,
+    format: str = "markdown",  # markdown or json
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """导出对话"""
+    service = ConversationService(db)
+    
+    # 验证对话属于用户
+    conv = service.get_conversation(conversation_id, str(user.id))
+    if not conv:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found"
+        )
+    
+    messages = service.get_messages(conversation_id, limit=1000)
+    
+    if format == "json":
+        import json
+        content = json.dumps({
+            "conversation": conv.to_dict(),
+            "messages": [m.to_dict() for m in messages]
+        }, ensure_ascii=False, indent=2)
+        filename = f"conversation-{conversation_id}.json"
+    else:
+        # Markdown format
+        lines = [
+            f"# {conv.title or '对话导出'}",
+            "",
+            f"导出时间: {conv.created_at}",
+            "",
+            "---",
+            ""
+        ]
+        
+        for msg in messages:
+            role = "**用户**" if msg.role == "user" else "**助手**"
+            lines.append(role)
+            lines.append("")
+            lines.append(msg.content)
+            lines.append("")
+            
+            # Add sources if available
+            if msg.sources:
+                lines.append("📎 来源：")
+                for src in msg.sources:
+                    title = src.get("title", "未知") if isinstance(src, dict) else str(src)
+                    lines.append(f"- {title}")
+                lines.append("")
+            
+            lines.append("---")
+            lines.append("")
+        
+        content = "\n".join(lines)
+        filename = f"conversation-{conversation_id}.md"
+    
+    return ExportResponse(content=content, filename=filename)
+
+
+# ==================== Share Endpoints ====================
+
 @router.post("/{conversation_id}/share")
 async def create_share(
     conversation_id: str,

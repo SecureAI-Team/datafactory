@@ -14,11 +14,38 @@ import {
   Users,
   MessageSquare,
   Zap,
+  Upload,
+  PenLine,
+  X,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import { useNavigate as useRouterNavigate } from 'react-router-dom'
 import { conversationsApi } from '../api/conversations'
+import { contributeApi } from '../api/contribute'
 import { useConversationStore, Message } from '../store/conversationStore'
 import clsx from 'clsx'
+
+// Patterns that indicate missing information
+const MISSING_INFO_PATTERNS = [
+  '抱歉',
+  '暂未找到',
+  '没有找到',
+  '暂无相关',
+  '无法找到',
+  '找不到',
+  '暂时没有',
+  '缺少相关',
+]
+
+// Patterns that indicate high-value signals
+const HIGH_VALUE_PATTERNS = [
+  '成交',
+  '签约',
+  '中标',
+  '选择了我们',
+  '合作成功',
+  '客户很满意',
+]
 
 // 快捷场景卡片
 const scenarios = [
@@ -33,16 +60,195 @@ const scenarios = [
 interface MessageItemProps {
   message: Message
   onFeedback: (feedback: 'positive' | 'negative') => void
+  conversationId?: string
+  userQuery?: string
 }
 
-function MessageItem({ message, onFeedback }: MessageItemProps) {
+// Embedded Contribution Prompt Component
+function ContributionPrompt({ 
+  type, 
+  onClose, 
+  conversationId,
+  queryText
+}: { 
+  type: 'missing_info' | 'high_value_signal'
+  onClose: () => void
+  conversationId?: string
+  queryText?: string
+}) {
+  const nav = useRouterNavigate()
+  const [draftMode, setDraftMode] = useState(false)
+  const [draftContent, setDraftContent] = useState('')
+  const [customerName, setCustomerName] = useState('')
+  
+  const handleFileUpload = () => {
+    nav('/upload')
+  }
+  
+  const handleSaveDraft = async () => {
+    if (!draftContent.trim()) return
+    try {
+      await contributeApi.saveDraft({
+        title: customerName || '草稿知识',
+        description: draftContent,
+        ku_type_code: type === 'high_value_signal' ? 'case.customer_story' : 'field.signal',
+        trigger_type: type,
+        conversation_id: conversationId,
+        query_text: queryText,
+      })
+      setDraftMode(false)
+      setDraftContent('')
+      setCustomerName('')
+      onClose()
+      // Show success message
+      alert('已保存到贡献队列，等待审核')
+    } catch (error) {
+      console.error('Save draft failed:', error)
+      alert('保存失败，请稍后重试')
+    }
+  }
+  
+  if (type === 'missing_info') {
+    return (
+      <div className="mt-4 p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg animate-fade-in">
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex items-center gap-2 text-amber-400">
+            <span>💡</span>
+            <span className="font-medium">您手上有相关材料吗？</span>
+          </div>
+          <button onClick={onClose} className="text-dark-400 hover:text-white">
+            <X size={16} />
+          </button>
+        </div>
+        
+        {!draftMode ? (
+          <>
+            <p className="text-sm text-dark-300 mb-3">
+              上传相关文件或描述您了解的信息，帮助丰富知识库：
+            </p>
+            <div className="flex gap-2">
+              <button 
+                onClick={handleFileUpload}
+                className="flex-1 btn-ghost py-2 border border-dashed border-dark-600 hover:border-primary-500"
+              >
+                <Upload size={16} className="mr-2" />
+                上传文件
+              </button>
+              <button 
+                onClick={() => setDraftMode(true)}
+                className="flex-1 btn-ghost py-2 border border-dashed border-dark-600 hover:border-primary-500"
+              >
+                <PenLine size={16} className="mr-2" />
+                描述信息
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="space-y-3">
+            <textarea
+              value={draftContent}
+              onChange={(e) => setDraftContent(e.target.value)}
+              placeholder="描述您了解的相关信息..."
+              className="w-full bg-dark-800 border border-dark-600 rounded-lg p-3 text-sm resize-none h-24 focus:border-primary-500 focus:outline-none"
+            />
+            <div className="flex gap-2">
+              <button 
+                onClick={() => setDraftMode(false)}
+                className="btn-ghost py-1.5 px-4 text-sm"
+              >
+                取消
+              </button>
+              <button 
+                onClick={handleSaveDraft}
+                disabled={!draftContent.trim()}
+                className="btn-primary py-1.5 px-4 text-sm"
+              >
+                保存草稿
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+  
+  // High value signal prompt
+  return (
+    <div className="mt-4 p-4 bg-green-500/10 border border-green-500/30 rounded-lg animate-fade-in">
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center gap-2 text-green-400">
+          <span>🎉</span>
+          <span className="font-medium">是否将此成功案例保存到知识库？</span>
+        </div>
+        <button onClick={onClose} className="text-dark-400 hover:text-white">
+          <X size={16} />
+        </button>
+      </div>
+      
+      <div className="space-y-3">
+        <input
+          type="text"
+          value={customerName}
+          onChange={(e) => setCustomerName(e.target.value)}
+          placeholder="客户名称（可选）"
+          className="w-full bg-dark-800 border border-dark-600 rounded-lg p-2 text-sm focus:border-primary-500 focus:outline-none"
+        />
+        <textarea
+          value={draftContent}
+          onChange={(e) => setDraftContent(e.target.value)}
+          placeholder="补充案例要点..."
+          className="w-full bg-dark-800 border border-dark-600 rounded-lg p-3 text-sm resize-none h-20 focus:border-primary-500 focus:outline-none"
+        />
+        <div className="flex gap-2">
+          <button 
+            onClick={onClose}
+            className="btn-ghost py-1.5 px-4 text-sm"
+          >
+            稍后再说
+          </button>
+          <button 
+            onClick={handleSaveDraft}
+            className="btn-primary py-1.5 px-4 text-sm"
+          >
+            保存案例
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MessageItem({ message, onFeedback, conversationId, userQuery }: MessageItemProps) {
   const [copied, setCopied] = useState(false)
+  const [showContribution, setShowContribution] = useState(true)
+  const [shareDialogOpen, setShareDialogOpen] = useState(false)
   
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
+  
+  const handleShare = async () => {
+    if (conversationId) {
+      try {
+        const result = await conversationsApi.createShare(conversationId)
+        navigator.clipboard.writeText(result.share_url)
+        setShareDialogOpen(false)
+        alert('分享链接已复制到剪贴板')
+      } catch (error) {
+        console.error('Share failed:', error)
+      }
+    }
+  }
+  
+  // Detect if this is a "missing info" response
+  const isMissingInfo = message.role === 'assistant' && 
+    MISSING_INFO_PATTERNS.some(pattern => message.content.includes(pattern))
+  
+  // Detect high-value signal in user message
+  const isHighValueSignal = message.role === 'user' &&
+    HIGH_VALUE_PATTERNS.some(pattern => message.content.includes(pattern))
   
   return (
     <div
@@ -93,6 +299,26 @@ function MessageItem({ message, onFeedback }: MessageItemProps) {
           </div>
         )}
         
+        {/* Missing Info Contribution Prompt */}
+        {isMissingInfo && showContribution && (
+          <ContributionPrompt 
+            type="missing_info"
+            onClose={() => setShowContribution(false)}
+            conversationId={conversationId}
+            queryText={userQuery}
+          />
+        )}
+        
+        {/* High Value Signal Contribution Prompt */}
+        {isHighValueSignal && showContribution && (
+          <ContributionPrompt 
+            type="high_value_signal"
+            onClose={() => setShowContribution(false)}
+            conversationId={conversationId}
+            queryText={message.content}
+          />
+        )}
+        
         {/* Actions for assistant messages */}
         {message.role === 'assistant' && (
           <div className="flex items-center gap-2 mt-3 pt-3 border-t border-dark-700">
@@ -118,7 +344,7 @@ function MessageItem({ message, onFeedback }: MessageItemProps) {
               <Copy size={14} />
               {copied && <span className="ml-1">已复制</span>}
             </button>
-            <button className="btn-ghost p-1.5 text-xs">
+            <button onClick={handleShare} className="btn-ghost p-1.5 text-xs">
               <Share2 size={14} />
             </button>
           </div>
@@ -304,21 +530,31 @@ export default function Home() {
         ) : (
           /* Message List */
           <div className="p-4 space-y-6 max-w-4xl mx-auto">
-            {messages.map((message) => (
-              <MessageItem
-                key={message.message_id}
-                message={message}
-                onFeedback={(feedback) => {
-                  if (conversationId) {
-                    feedbackMutation.mutate({
-                      convId: conversationId,
-                      messageId: message.message_id,
-                      feedback,
-                    })
-                  }
-                }}
-              />
-            ))}
+            {messages.map((message, index) => {
+              // Find the previous user message for context
+              const prevUserMessage = messages
+                .slice(0, index)
+                .reverse()
+                .find(m => m.role === 'user')
+              
+              return (
+                <MessageItem
+                  key={message.message_id}
+                  message={message}
+                  conversationId={conversationId}
+                  userQuery={prevUserMessage?.content}
+                  onFeedback={(feedback) => {
+                    if (conversationId) {
+                      feedbackMutation.mutate({
+                        convId: conversationId,
+                        messageId: message.message_id,
+                        feedback,
+                      })
+                    }
+                  }}
+                />
+              )
+            })}
             
             {/* Typing Indicator */}
             {isSending && (

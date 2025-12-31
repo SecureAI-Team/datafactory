@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import AdminLayout from './components/layout/AdminLayout'
 import Dashboard from './pages/Dashboard'
 import Review from './pages/Review'
+import Dedup from './pages/Dedup'
 import Config from './pages/Config'
 import Users from './pages/Users'
 import Settings from './pages/Settings'
@@ -36,6 +37,7 @@ function App() {
         <Route path="/" element={<AdminLayout onLogout={() => setIsAuthenticated(false)} />}>
           <Route index element={<Dashboard />} />
           <Route path="review" element={<Review />} />
+          <Route path="dedup" element={<Dedup />} />
           <Route path="config" element={<Config />} />
           <Route path="tasks" element={<Tasks />} />
           <Route path="quality" element={<Quality />} />

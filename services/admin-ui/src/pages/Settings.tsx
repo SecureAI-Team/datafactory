@@ -176,12 +176,18 @@ function LLMSettings() {
     })
   }
   
-  const handleSaveGeneralParams = () => {
-    generalParamsForm.validateFields().then((values) => {
-      // TODO: Save general params to backend when API is ready
-      console.log('General params to save:', values)
+  const saveGeneralParamsMutation = useMutation({
+    mutationFn: settingsApi.updateLLMGeneralParams,
+    onSuccess: () => {
       message.success('通用参数已保存')
       setGeneralParamsModal(false)
+    },
+    onError: () => message.error('保存失败'),
+  })
+  
+  const handleSaveGeneralParams = () => {
+    generalParamsForm.validateFields().then((values) => {
+      saveGeneralParamsMutation.mutate(values)
     })
   }
   
@@ -737,10 +743,17 @@ function ConfigSyncSettings() {
     not_synced: comparisons.filter(c => c.source === 'env' && !c.in_sync).length,
   }
   
+  const syncMutation = useMutation({
+    mutationFn: settingsApi.syncConfigs,
+    onSuccess: (data) => {
+      message.success(data.message || `已同步 ${data.synced} 项配置`)
+      queryClient.invalidateQueries({ queryKey: ['settings-system-configs'] })
+    },
+    onError: () => message.error('同步失败'),
+  })
+  
   const handleSync = () => {
-    // TODO: Implement actual sync when backend API is ready
-    message.info('配置同步功能正在开发中...')
-    queryClient.invalidateQueries({ queryKey: ['settings-system-configs'] })
+    syncMutation.mutate()
   }
   
   const handleExport = () => {

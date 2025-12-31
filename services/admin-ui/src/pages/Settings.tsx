@@ -134,7 +134,7 @@ function LLMSettings() {
   useEffect(() => {
     if (modelModal.item && !modelModal.isNew) {
       // Exclude complex object fields to prevent React render errors
-      const { config: _config, capabilities: _capabilities, ...formValues } = modelModal.item as Record<string, unknown>
+      const { config: _config, capabilities: _capabilities, ...formValues } = modelModal.item as unknown as Record<string, unknown>
       modelForm.setFieldsValue(formValues)
     } else if (modelModal.isNew) {
       modelForm.resetFields()
@@ -145,7 +145,7 @@ function LLMSettings() {
   useEffect(() => {
     if (assignmentModal.item) {
       // Exclude config_override to prevent React render errors
-      const { config_override: _config_override, ...formValues } = assignmentModal.item as Record<string, unknown>
+      const { config_override: _config_override, ...formValues } = assignmentModal.item as unknown as Record<string, unknown>
       assignmentForm.setFieldsValue(formValues)
     }
   }, [assignmentModal, assignmentForm])

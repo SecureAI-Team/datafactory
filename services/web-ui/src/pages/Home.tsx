@@ -225,28 +225,80 @@ function ContributionPrompt({
 
 function MessageItem({ message, onFeedback, onEdit, conversationId, userQuery, canEdit }: MessageItemProps) {
   const [copied, setCopied] = useState(false)
+  const [shared, setShared] = useState(false)
   const [showContribution, setShowContribution] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
   const [editContent, setEditContent] = useState(message.content)
-  // Share dialog state - reserved for future use
-  const [, setShareDialogOpen] = useState(false)
+  const [shareError, setShareError] = useState<string | null>(null)
   
-  const handleCopy = () => {
-    navigator.clipboard.writeText(message.content)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+  // Helper function to copy text to clipboard (works on HTTP and HTTPS)
+  const copyToClipboard = async (text: string): Promise<boolean> => {
+    // Try modern clipboard API first (requires HTTPS)
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text)
+        return true
+      } catch (err) {
+        console.warn('Clipboard API failed, trying fallback:', err)
+      }
+    }
+    
+    // Fallback for HTTP or older browsers
+    const textArea = document.createElement('textarea')
+    textArea.value = text
+    textArea.style.position = 'fixed'
+    textArea.style.left = '-9999px'
+    textArea.style.top = '-9999px'
+    document.body.appendChild(textArea)
+    textArea.focus()
+    textArea.select()
+    
+    try {
+      const successful = document.execCommand('copy')
+      document.body.removeChild(textArea)
+      return successful
+    } catch (err) {
+      console.error('Fallback copy failed:', err)
+      document.body.removeChild(textArea)
+      return false
+    }
+  }
+  
+  const handleCopy = async () => {
+    const success = await copyToClipboard(message.content)
+    if (success) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
   }
   
   const handleShare = async () => {
-    if (conversationId) {
-      try {
-        const result = await conversationsApi.createShare(conversationId)
-        navigator.clipboard.writeText(result.share_url)
-        setShareDialogOpen(false)
-        alert('分享链接已复制到剪贴板')
-      } catch (error) {
-        console.error('Share failed:', error)
+    if (!conversationId) {
+      setShareError('请先发送消息后再分享')
+      setTimeout(() => setShareError(null), 3000)
+      return
+    }
+    
+    try {
+      const result = await conversationsApi.createShare(conversationId)
+      // Build full URL from relative path
+      const baseUrl = window.location.origin
+      const fullShareUrl = result.share_url.startsWith('http') 
+        ? result.share_url 
+        : `${baseUrl}${result.share_url}`
+      
+      const success = await copyToClipboard(fullShareUrl)
+      if (success) {
+        setShared(true)
+        setTimeout(() => setShared(false), 2000)
+      } else {
+        setShareError('复制链接失败')
+        setTimeout(() => setShareError(null), 3000)
       }
+    } catch (error) {
+      console.error('Share failed:', error)
+      setShareError('分享失败，请稍后重试')
+      setTimeout(() => setShareError(null), 3000)
     }
   }
   
@@ -408,9 +460,13 @@ function MessageItem({ message, onFeedback, onEdit, conversationId, userQuery, c
               <Copy size={14} />
               {copied && <span className="ml-1">已复制</span>}
             </button>
-            <button onClick={handleShare} className="btn-ghost p-1.5 text-xs" title="分享">
+            <button onClick={handleShare} className="btn-ghost p-1.5 text-xs" title="分享对话">
               <Share2 size={14} />
+              {shared && <span className="ml-1">已分享</span>}
             </button>
+            {shareError && (
+              <span className="text-xs text-red-400 ml-2">{shareError}</span>
+            )}
           </div>
         )}
         

@@ -17,6 +17,8 @@ import {
   Upload,
   PenLine,
   X,
+  Pencil,
+  Check,
 } from 'lucide-react'
 import { useNavigate as useRouterNavigate } from 'react-router-dom'
 import { conversationsApi } from '../api/conversations'
@@ -60,8 +62,10 @@ const scenarios = [
 interface MessageItemProps {
   message: Message
   onFeedback: (feedback: 'positive' | 'negative') => void
+  onEdit?: (messageId: string, newContent: string) => void
   conversationId?: string
   userQuery?: string
+  canEdit?: boolean
 }
 
 // Embedded Contribution Prompt Component
@@ -218,9 +222,11 @@ function ContributionPrompt({
   )
 }
 
-function MessageItem({ message, onFeedback, conversationId, userQuery }: MessageItemProps) {
+function MessageItem({ message, onFeedback, onEdit, conversationId, userQuery, canEdit }: MessageItemProps) {
   const [copied, setCopied] = useState(false)
   const [showContribution, setShowContribution] = useState(true)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editContent, setEditContent] = useState(message.content)
   // Share dialog state - reserved for future use
   const [, setShareDialogOpen] = useState(false)
   
@@ -243,6 +249,32 @@ function MessageItem({ message, onFeedback, conversationId, userQuery }: Message
     }
   }
   
+  const handleStartEdit = () => {
+    setEditContent(message.content)
+    setIsEditing(true)
+  }
+  
+  const handleCancelEdit = () => {
+    setEditContent(message.content)
+    setIsEditing(false)
+  }
+  
+  const handleConfirmEdit = () => {
+    if (editContent.trim() && editContent !== message.content && onEdit) {
+      onEdit(message.message_id, editContent.trim())
+    }
+    setIsEditing(false)
+  }
+  
+  const handleEditKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleConfirmEdit()
+    } else if (e.key === 'Escape') {
+      handleCancelEdit()
+    }
+  }
+  
   // Detect if this is a "missing info" response
   const isMissingInfo = message.role === 'assistant' && 
     MISSING_INFO_PATTERNS.some(pattern => message.content.includes(pattern))
@@ -254,7 +286,7 @@ function MessageItem({ message, onFeedback, conversationId, userQuery }: Message
   return (
     <div
       className={clsx(
-        'flex gap-3 animate-fade-in',
+        'flex gap-3 animate-fade-in group',
         message.role === 'user' ? 'flex-row-reverse' : 'flex-row'
       )}
     >
@@ -279,10 +311,40 @@ function MessageItem({ message, onFeedback, conversationId, userQuery }: Message
           message.role === 'user' ? 'message-user' : 'message-assistant'
         )}
       >
-        <MarkdownRenderer content={message.content} />
+        {/* Edit Mode */}
+        {isEditing ? (
+          <div className="space-y-2">
+            <textarea
+              value={editContent}
+              onChange={(e) => setEditContent(e.target.value)}
+              onKeyDown={handleEditKeyDown}
+              className="w-full bg-dark-700 border border-dark-500 rounded-lg p-3 text-sm resize-none min-h-[80px] focus:border-primary-500 focus:outline-none text-dark-100"
+              autoFocus
+            />
+            <div className="flex items-center gap-2 justify-end">
+              <button
+                onClick={handleCancelEdit}
+                className="btn-ghost py-1 px-3 text-xs flex items-center gap-1"
+              >
+                <X size={14} />
+                取消
+              </button>
+              <button
+                onClick={handleConfirmEdit}
+                className="btn-primary py-1 px-3 text-xs flex items-center gap-1"
+                disabled={!editContent.trim() || editContent === message.content}
+              >
+                <Check size={14} />
+                确认
+              </button>
+            </div>
+          </div>
+        ) : (
+          <MarkdownRenderer content={message.content} />
+        )}
         
         {/* Sources */}
-        {message.sources && message.sources.length > 0 && (
+        {!isEditing && message.sources && message.sources.length > 0 && (
           <div className="mt-3 pt-3 border-t border-dark-700">
             <p className="text-xs text-dark-400 mb-1">📎 来源：</p>
             <div className="flex flex-wrap gap-2">
@@ -299,7 +361,7 @@ function MessageItem({ message, onFeedback, conversationId, userQuery }: Message
         )}
         
         {/* Missing Info Contribution Prompt */}
-        {isMissingInfo && showContribution && (
+        {!isEditing && isMissingInfo && showContribution && (
           <ContributionPrompt 
             type="missing_info"
             onClose={() => setShowContribution(false)}
@@ -309,7 +371,7 @@ function MessageItem({ message, onFeedback, conversationId, userQuery }: Message
         )}
         
         {/* High Value Signal Contribution Prompt */}
-        {isHighValueSignal && showContribution && (
+        {!isEditing && isHighValueSignal && showContribution && (
           <ContributionPrompt 
             type="high_value_signal"
             onClose={() => setShowContribution(false)}
@@ -319,7 +381,7 @@ function MessageItem({ message, onFeedback, conversationId, userQuery }: Message
         )}
         
         {/* Actions for assistant messages */}
-        {message.role === 'assistant' && (
+        {!isEditing && message.role === 'assistant' && (
           <div className="flex items-center gap-2 mt-3 pt-3 border-t border-dark-700">
             <button
               onClick={() => onFeedback('positive')}
@@ -327,6 +389,7 @@ function MessageItem({ message, onFeedback, conversationId, userQuery }: Message
                 'btn-ghost p-1.5 text-xs',
                 message.feedback === 'positive' && 'text-green-400 bg-green-500/10'
               )}
+              title="有帮助"
             >
               <ThumbsUp size={14} />
             </button>
@@ -336,16 +399,32 @@ function MessageItem({ message, onFeedback, conversationId, userQuery }: Message
                 'btn-ghost p-1.5 text-xs',
                 message.feedback === 'negative' && 'text-red-400 bg-red-500/10'
               )}
+              title="没帮助"
             >
               <ThumbsDown size={14} />
             </button>
-            <button onClick={handleCopy} className="btn-ghost p-1.5 text-xs">
+            <button onClick={handleCopy} className="btn-ghost p-1.5 text-xs" title="复制">
               <Copy size={14} />
               {copied && <span className="ml-1">已复制</span>}
             </button>
-            <button onClick={handleShare} className="btn-ghost p-1.5 text-xs">
+            <button onClick={handleShare} className="btn-ghost p-1.5 text-xs" title="分享">
               <Share2 size={14} />
             </button>
+          </div>
+        )}
+        
+        {/* Actions for user messages */}
+        {!isEditing && message.role === 'user' && (
+          <div className="flex items-center gap-2 mt-3 pt-3 border-t border-dark-600 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button onClick={handleCopy} className="btn-ghost p-1.5 text-xs" title="复制">
+              <Copy size={14} />
+              {copied && <span className="ml-1">已复制</span>}
+            </button>
+            {canEdit && (
+              <button onClick={handleStartEdit} className="btn-ghost p-1.5 text-xs" title="编辑">
+                <Pencil size={14} />
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -353,13 +432,23 @@ function MessageItem({ message, onFeedback, conversationId, userQuery }: Message
   )
 }
 
+// Upload status type
+interface UploadStatus {
+  type: 'uploading' | 'success' | 'error'
+  fileName?: string
+  message?: string
+}
+
 export default function Home() {
   const { conversationId } = useParams()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   
   const [input, setInput] = useState('')
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadStatus, setUploadStatus] = useState<UploadStatus | null>(null)
   const { messages, setMessages, addMessage, updateMessage, isSending, setSending } =
     useConversationStore()
   
@@ -408,6 +497,58 @@ export default function Home() {
       updateMessage(variables.messageId, { feedback: variables.feedback })
     },
   })
+  
+  // File upload handler
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    
+    // Reset input so same file can be selected again
+    e.target.value = ''
+    
+    // Check file size (50MB limit)
+    const maxSize = 50 * 1024 * 1024
+    if (file.size > maxSize) {
+      setUploadStatus({
+        type: 'error',
+        message: '文件大小超过 50MB 限制'
+      })
+      return
+    }
+    
+    setIsUploading(true)
+    setUploadStatus({
+      type: 'uploading',
+      fileName: file.name
+    })
+    
+    try {
+      await contributeApi.uploadFile(file, {
+        title: file.name,
+        description: `通过对话界面上传`,
+        ku_type_code: 'field.signal',
+        conversation_id: conversationId,
+        visibility: 'internal',
+      })
+      
+      setUploadStatus({
+        type: 'success',
+        message: `文件 "${file.name}" 上传成功，待审核后入库`
+      })
+      
+      // Auto clear success message after 5 seconds
+      setTimeout(() => {
+        setUploadStatus((prev) => prev?.type === 'success' ? null : prev)
+      }, 5000)
+    } catch (err) {
+      setUploadStatus({
+        type: 'error',
+        message: `上传失败: ${err instanceof Error ? err.message : '未知错误'}`
+      })
+    } finally {
+      setIsUploading(false)
+    }
+  }
   
   useEffect(() => {
     if (messagesData) {
@@ -490,6 +631,45 @@ export default function Home() {
     setInput(prompts[scenarioId] || '')
   }
   
+  // Handle edit message - truncate messages and resend
+  const handleEditMessage = (messageId: string, newContent: string) => {
+    if (!conversationId || isSending) return
+    
+    // Find the index of the message being edited
+    const messageIndex = messages.findIndex(m => m.message_id === messageId)
+    if (messageIndex === -1) return
+    
+    // Truncate messages to the edited message (remove it and everything after)
+    const truncatedMessages = messages.slice(0, messageIndex)
+    setMessages(truncatedMessages)
+    
+    // Send the new message
+    setSending(true)
+    
+    // Add new user message to UI immediately
+    const userMessage: Message = {
+      id: Date.now(),
+      message_id: `temp-${Date.now()}`,
+      role: 'user',
+      content: newContent,
+      sources: [],
+      feedback: null,
+      tokens_used: null,
+      model_used: null,
+      latency_ms: null,
+      created_at: new Date().toISOString(),
+    }
+    addMessage(userMessage)
+    
+    // Send message
+    sendMutation.mutate({ convId: conversationId, content: newContent })
+  }
+  
+  // Find the last user message index for edit capability
+  const lastUserMessageIndex = messages.reduce((lastIdx, msg, idx) => {
+    return msg.role === 'user' ? idx : lastIdx
+  }, -1)
+  
   return (
     <div className="flex flex-col h-full">
       {/* Messages Area */}
@@ -536,12 +716,19 @@ export default function Home() {
                 .reverse()
                 .find(m => m.role === 'user')
               
+              // Only the last user message can be edited (and not while sending)
+              const canEdit = message.role === 'user' && 
+                              index === lastUserMessageIndex && 
+                              !isSending
+              
               return (
                 <MessageItem
                   key={message.message_id}
                   message={message}
                   conversationId={conversationId}
                   userQuery={prevUserMessage?.content}
+                  canEdit={canEdit}
+                  onEdit={handleEditMessage}
                   onFeedback={(feedback) => {
                     if (conversationId) {
                       feedbackMutation.mutate({
@@ -579,35 +766,93 @@ export default function Home() {
       {/* Input Area */}
       <div className="border-t border-dark-800 p-4 bg-dark-900/50">
         <div className="max-w-4xl mx-auto">
-          <div className="relative">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="输入问题或使用快捷命令 (/案例, /报价, /方案, /对比, /话术)"
-              rows={1}
-              className="input pr-12 py-3 resize-none min-h-[48px] max-h-[200px]"
-              style={{ height: 'auto' }}
-              onInput={(e) => {
-                const target = e.target as HTMLTextAreaElement
-                target.style.height = 'auto'
-                target.style.height = Math.min(target.scrollHeight, 200) + 'px'
-              }}
+          {/* Upload Status Bar */}
+          {uploadStatus && (
+            <div className={clsx(
+              'mb-3 p-3 rounded-lg flex items-center gap-3',
+              uploadStatus.type === 'uploading' && 'bg-dark-800',
+              uploadStatus.type === 'success' && 'bg-green-500/10 border border-green-500/30',
+              uploadStatus.type === 'error' && 'bg-red-500/10 border border-red-500/30'
+            )}>
+              {uploadStatus.type === 'uploading' && (
+                <>
+                  <Loader2 size={16} className="animate-spin text-primary-400" />
+                  <span className="text-sm">上传中: {uploadStatus.fileName}</span>
+                </>
+              )}
+              {uploadStatus.type === 'success' && (
+                <>
+                  <Check size={16} className="text-green-400" />
+                  <span className="text-sm text-green-400">{uploadStatus.message}</span>
+                </>
+              )}
+              {uploadStatus.type === 'error' && (
+                <>
+                  <X size={16} className="text-red-400" />
+                  <span className="text-sm text-red-400">{uploadStatus.message}</span>
+                </>
+              )}
+              <button
+                onClick={() => setUploadStatus(null)}
+                className="ml-auto text-dark-400 hover:text-dark-200"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
+          
+          <div className="relative flex items-end gap-2">
+            {/* File Upload Button */}
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileChange}
+              accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,.csv"
+              className="hidden"
             />
             <button
-              onClick={handleSend}
-              disabled={!input.trim() || isSending}
-              className="absolute right-2 bottom-2 btn-primary p-2"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+              className="btn-ghost p-3 shrink-0"
+              title="上传文件"
             >
-              {isSending ? (
-                <Loader2 size={18} className="animate-spin" />
+              {isUploading ? (
+                <Loader2 size={18} className="animate-spin text-primary-400" />
               ) : (
-                <Send size={18} />
+                <Upload size={18} className="text-dark-400 hover:text-primary-400" />
               )}
             </button>
+            
+            <div className="flex-1 relative">
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="输入问题或使用快捷命令 (/案例, /报价, /方案, /对比, /话术)"
+                rows={1}
+                className="input pr-12 py-3 resize-none min-h-[48px] max-h-[200px] w-full"
+                style={{ height: 'auto' }}
+                onInput={(e) => {
+                  const target = e.target as HTMLTextAreaElement
+                  target.style.height = 'auto'
+                  target.style.height = Math.min(target.scrollHeight, 200) + 'px'
+                }}
+              />
+              <button
+                onClick={handleSend}
+                disabled={!input.trim() || isSending}
+                className="absolute right-2 bottom-2 btn-primary p-2"
+              >
+                {isSending ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : (
+                  <Send size={18} />
+                )}
+              </button>
+            </div>
           </div>
           <p className="text-xs text-dark-500 mt-2 text-center">
-            按 Enter 发送，Shift+Enter 换行
+            按 Enter 发送，Shift+Enter 换行 | 点击 <Upload size={12} className="inline" /> 上传文件
           </p>
         </div>
       </div>

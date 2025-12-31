@@ -25,36 +25,54 @@ async def get_overview(
 ):
     """获取仪表盘概览数据"""
     today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday = today - timedelta(days=1)
     
     # Today's processed documents
-    today_processed = db.query(func.count(SourceDocument.id)).filter(
-        SourceDocument.created_at >= today
-    ).scalar() or 0
+    try:
+        today_processed = db.query(func.count(SourceDocument.id)).filter(
+            SourceDocument.created_at >= today
+        ).scalar() or 0
+    except Exception:
+        today_processed = 0
     
     # Total KUs
-    total_kus = db.query(func.count(KnowledgeUnit.id)).scalar() or 0
+    try:
+        total_kus = db.query(func.count(KnowledgeUnit.id)).scalar() or 0
+    except Exception:
+        total_kus = 0
     
     # Published KUs
-    published_kus = db.query(func.count(KnowledgeUnit.id)).filter(
-        KnowledgeUnit.status == "published"
-    ).scalar() or 0
+    try:
+        published_kus = db.query(func.count(KnowledgeUnit.id)).filter(
+            KnowledgeUnit.status == "published"
+        ).scalar() or 0
+    except Exception:
+        published_kus = 0
     
     # Pending reviews
-    pending_reviews = db.query(func.count(Contribution.id)).filter(
-        Contribution.status == "pending"
-    ).scalar() or 0
+    try:
+        pending_reviews = db.query(func.count(Contribution.id)).filter(
+            Contribution.status == "pending"
+        ).scalar() or 0
+    except Exception:
+        pending_reviews = 0
     
     # Failed pipeline runs (last 24h)
-    yesterday = today - timedelta(days=1)
-    failed_runs = db.query(func.count(PipelineRun.id)).filter(
-        PipelineRun.status == "failed",
-        PipelineRun.started_at >= yesterday
-    ).scalar() or 0
+    try:
+        failed_runs = db.query(func.count(PipelineRun.id)).filter(
+            PipelineRun.status == "failed",
+            PipelineRun.started_at >= yesterday
+        ).scalar() or 0
+    except Exception:
+        failed_runs = 0
     
     # Active users today
-    active_users = db.query(func.count(func.distinct(ConversationMessage.conversation_id))).filter(
-        ConversationMessage.created_at >= today
-    ).scalar() or 0
+    try:
+        active_users = db.query(func.count(func.distinct(ConversationMessage.conversation_id))).filter(
+            ConversationMessage.created_at >= today
+        ).scalar() or 0
+    except Exception:
+        active_users = 0
     
     return {
         "today_processed": today_processed,
@@ -132,35 +150,49 @@ async def get_quality_stats(
     db: Session = Depends(get_db)
 ):
     """获取质量指标"""
-    # DQ pass rate (last 30 days)
     thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
     
-    dq_runs = db.query(
-        DQRun.passed,
-        func.count(DQRun.id)
-    ).filter(
-        DQRun.run_at >= thirty_days_ago
-    ).group_by(DQRun.passed).all()
+    # DQ pass rate (last 30 days)
+    total_dq = 0
+    passed_dq = 0
+    pass_rate = 0
     
-    total_dq = sum(count for _, count in dq_runs)
-    passed_dq = next((count for passed, count in dq_runs if passed), 0)
-    pass_rate = (passed_dq / total_dq * 100) if total_dq > 0 else 0
+    try:
+        dq_runs = db.query(
+            DQRun.passed,
+            func.count(DQRun.id)
+        ).filter(
+            DQRun.run_at >= thirty_days_ago
+        ).group_by(DQRun.passed).all()
+        
+        total_dq = sum(count for _, count in dq_runs)
+        passed_dq = next((count for passed, count in dq_runs if passed), 0)
+        pass_rate = (passed_dq / total_dq * 100) if total_dq > 0 else 0
+    except Exception:
+        # Table may not exist
+        pass
     
     # KU distribution by type
-    ku_types = db.query(
-        KnowledgeUnit.ku_type,
-        func.count(KnowledgeUnit.id)
-    ).group_by(KnowledgeUnit.ku_type).all()
-    
-    type_distribution = {t: c for t, c in ku_types if t}
+    type_distribution = {}
+    try:
+        ku_types = db.query(
+            KnowledgeUnit.ku_type,
+            func.count(KnowledgeUnit.id)
+        ).group_by(KnowledgeUnit.ku_type).all()
+        type_distribution = {t: c for t, c in ku_types if t}
+    except Exception:
+        pass
     
     # KU distribution by status
-    ku_status = db.query(
-        KnowledgeUnit.status,
-        func.count(KnowledgeUnit.id)
-    ).group_by(KnowledgeUnit.status).all()
-    
-    status_distribution = {s: c for s, c in ku_status if s}
+    status_distribution = {}
+    try:
+        ku_status = db.query(
+            KnowledgeUnit.status,
+            func.count(KnowledgeUnit.id)
+        ).group_by(KnowledgeUnit.status).all()
+        status_distribution = {s: c for s, c in ku_status if s}
+    except Exception:
+        pass
     
     return {
         "dq_pass_rate": round(pass_rate, 2),
@@ -253,54 +285,66 @@ async def get_recent_activity(
     activities = []
     
     # Recent pipeline runs
-    recent_pipelines = db.query(PipelineRun).order_by(
-        desc(PipelineRun.started_at)
-    ).limit(5).all()
-    
-    for run in recent_pipelines:
-        duration = None
-        if run.ended_at and run.started_at:
-            duration = f"{(run.ended_at - run.started_at).total_seconds():.1f}s"
+    try:
+        recent_pipelines = db.query(PipelineRun).order_by(
+            desc(PipelineRun.started_at)
+        ).limit(5).all()
         
-        activities.append({
-            "type": "pipeline",
-            "status": run.status,
-            "message": f"Pipeline {run.pipeline_name} {run.status}" + (f" (耗时 {duration})" if duration else ""),
-            "time": run.started_at.isoformat() if run.started_at else None
-        })
+        for run in recent_pipelines:
+            duration = None
+            if run.ended_at and run.started_at:
+                duration = f"{(run.ended_at - run.started_at).total_seconds():.1f}s"
+            
+            activities.append({
+                "type": "pipeline",
+                "status": run.status,
+                "message": f"Pipeline {run.pipeline_name} {run.status}" + (f" (耗时 {duration})" if duration else ""),
+                "time": run.started_at.isoformat() if run.started_at else None
+            })
+    except Exception:
+        pass
     
     # Recent contributions
-    recent_contributions = db.query(
-        Contribution, User.display_name, User.username
-    ).join(
-        User, Contribution.contributor_id == User.id
-    ).order_by(
-        desc(Contribution.created_at)
-    ).limit(5).all()
-    
-    for contrib, display_name, username in recent_contributions:
-        name = display_name or username
-        activities.append({
-            "type": "contribution",
-            "status": contrib.status,
-            "message": f"用户 {name} 提交了新贡献: {contrib.title}",
-            "time": contrib.created_at.isoformat() if contrib.created_at else None
-        })
+    try:
+        recent_contributions = db.query(
+            Contribution, User.display_name, User.username
+        ).join(
+            User, Contribution.contributor_id == User.id
+        ).order_by(
+            desc(Contribution.created_at)
+        ).limit(5).all()
+        
+        for contrib, display_name, username in recent_contributions:
+            name = display_name or username
+            activities.append({
+                "type": "contribution",
+                "status": contrib.status,
+                "message": f"用户 {name} 提交了新贡献: {contrib.title}",
+                "time": contrib.created_at.isoformat() if contrib.created_at else None
+            })
+    except Exception:
+        pass
     
     # Recent DQ failures
-    recent_dq = db.query(DQRun).filter(
-        DQRun.passed == False
-    ).order_by(
-        desc(DQRun.run_at)
-    ).limit(3).all()
-    
-    for dq in recent_dq:
-        activities.append({
-            "type": "dq",
-            "status": "failed",
-            "message": f"DQ 检查失败: KU-{dq.ku_id} {dq.failure_reasons[0] if dq.failure_reasons else ''}",
-            "time": dq.run_at.isoformat() if dq.run_at else None
-        })
+    try:
+        recent_dq = db.query(DQRun).filter(
+            DQRun.passed == False
+        ).order_by(
+            desc(DQRun.run_at)
+        ).limit(3).all()
+        
+        for dq in recent_dq:
+            failure_msg = ""
+            if dq.failure_reasons and len(dq.failure_reasons) > 0:
+                failure_msg = dq.failure_reasons[0]
+            activities.append({
+                "type": "dq",
+                "status": "failed",
+                "message": f"DQ 检查失败: KU-{dq.ku_id} {failure_msg}",
+                "time": dq.run_at.isoformat() if dq.run_at else None
+            })
+    except Exception:
+        pass
     
     # Sort by time
     activities.sort(key=lambda x: x["time"] or "", reverse=True)

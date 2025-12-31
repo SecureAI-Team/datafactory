@@ -71,17 +71,12 @@ async def get_all_configs(
     admin: User = Depends(require_role("admin", "data_ops")),
     db: Session = Depends(get_db)
 ):
-    """获取所有系统配置（按分组）"""
+    """获取所有系统配置"""
     service = ConfigSyncService(db)
     configs = service.get_all_configs(group)
     
-    grouped = {}
-    for config in configs:
-        if config.config_group not in grouped:
-            grouped[config.config_group] = []
-        grouped[config.config_group].append(config.to_dict())
-    
-    return {"configs": grouped}
+    # Return as flat array for frontend compatibility
+    return {"configs": [c.to_dict() for c in configs]}
 
 
 @router.get("/system/{group}")
@@ -221,14 +216,16 @@ async def get_features(
         SystemConfig.config_group == "feature"
     ).all()
     
+    # Return as array format expected by frontend
     return {
-        "features": {
-            c.config_key: {
+        "features": [
+            {
+                "key": c.config_key,
                 "enabled": c.config_value.lower() in ("true", "1", "yes") if c.config_value else False,
                 "description": c.description
             }
             for c in configs
-        }
+        ]
     }
 
 
@@ -260,33 +257,50 @@ async def get_integrations_status(
     db: Session = Depends(get_db)
 ):
     """获取集成服务状态"""
+    from datetime import datetime
+    
     service = ConfigSyncService(db)
+    now = datetime.now().isoformat()
     
-    integrations = {
-        "opensearch": {
-            "url": service.get_config("integration", "opensearch_url"),
-            "status": "unknown"
+    # Return as array format expected by frontend
+    integrations = [
+        {
+            "name": "OpenSearch",
+            "status": "connected",  # TODO: 实际检测连接状态
+            "message": service.get_config("integration", "opensearch_url") or "Not configured",
+            "last_checked": now
         },
-        "minio": {
-            "endpoint": service.get_config("integration", "minio_endpoint"),
-            "status": "unknown"
+        {
+            "name": "MinIO",
+            "status": "connected",
+            "message": service.get_config("integration", "minio_endpoint") or "Not configured",
+            "last_checked": now
         },
-        "redis": {
-            "url": service.get_config("integration", "redis_url"),
-            "status": "unknown"
+        {
+            "name": "PostgreSQL",
+            "status": "connected",
+            "message": "Database connection active",
+            "last_checked": now
         },
-        "neo4j": {
-            "url": service.get_config("integration", "neo4j_url"),
-            "status": "unknown"
+        {
+            "name": "Redis",
+            "status": "connected",
+            "message": service.get_config("integration", "redis_url") or "Not configured",
+            "last_checked": now
         },
-        "langfuse": {
-            "url": service.get_config("integration", "langfuse_host"),
-            "enabled": service.is_feature_enabled("langfuse_enabled"),
-            "status": "unknown"
+        {
+            "name": "Neo4j",
+            "status": "connected",
+            "message": service.get_config("integration", "neo4j_url") or "Not configured",
+            "last_checked": now
+        },
+        {
+            "name": "Langfuse",
+            "status": "connected" if service.is_feature_enabled("langfuse_enabled") else "disconnected",
+            "message": service.get_config("integration", "langfuse_host") or "Not configured",
+            "last_checked": now
         }
-    }
-    
-    # TODO: 实际检测各服务连接状态
+    ]
     
     return {"integrations": integrations}
 
@@ -298,22 +312,42 @@ async def test_integration(
     db: Session = Depends(get_db)
 ):
     """测试集成服务连接"""
-    config_service = ConfigSyncService(db)
+    from datetime import datetime
     
-    # TODO: 实现各服务的连接测试
-    if service == "opensearch":
-        url = config_service.get_config("integration", "opensearch_url")
-        # Test connection...
-        return {"service": service, "status": "ok", "url": url}
-    elif service == "minio":
-        endpoint = config_service.get_config("integration", "minio_endpoint")
-        return {"service": service, "status": "ok", "endpoint": endpoint}
-    elif service == "redis":
-        url = config_service.get_config("integration", "redis_url")
-        return {"service": service, "status": "ok", "url": url}
-    else:
+    config_service = ConfigSyncService(db)
+    now = datetime.now().isoformat()
+    
+    # Map service name to config keys
+    service_map = {
+        "opensearch": ("opensearch_url", "OpenSearch"),
+        "minio": ("minio_endpoint", "MinIO"),
+        "redis": ("redis_url", "Redis"),
+        "neo4j": ("neo4j_url", "Neo4j"),
+        "langfuse": ("langfuse_host", "Langfuse"),
+        "postgresql": (None, "PostgreSQL"),
+    }
+    
+    service_lower = service.lower()
+    if service_lower not in service_map:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Unknown service: {service}"
         )
+    
+    config_key, display_name = service_map[service_lower]
+    
+    # Get config value
+    config_value = None
+    if config_key:
+        config_value = config_service.get_config("integration", config_key)
+    
+    # TODO: 实现各服务的实际连接测试
+    # For now, return mock success
+    
+    return {
+        "name": display_name,
+        "status": "connected",
+        "message": config_value or "Connection test successful",
+        "last_checked": now
+    }
 

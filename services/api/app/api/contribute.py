@@ -51,6 +51,13 @@ class UpdateContributionRequest(BaseModel):
     visibility: Optional[str] = None
 
 
+class SupplementInfoRequest(BaseModel):
+    """Request to supplement a contribution that needs more info"""
+    additional_info: str  # Text response to reviewer's questions
+    content_json: Optional[dict] = None  # Optional: additional structured content
+    file_path: Optional[str] = None  # Optional: path to newly uploaded file
+
+
 class ContributionResponse(BaseModel):
     id: int
     contributor_id: int
@@ -439,6 +446,73 @@ async def delete_contribution(
     db.commit()
     
     return {"message": "Contribution deleted"}
+
+
+@router.put("/{contribution_id}/supplement", response_model=ContributionResponse)
+async def supplement_contribution(
+    contribution_id: int,
+    body: SupplementInfoRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    补充贡献信息 - 响应审核员的补充请求
+    
+    只能对 status='needs_info' 的贡献进行补充
+    补充后状态变为 'pending'，重新进入审核队列
+    """
+    contribution = db.query(Contribution).filter(
+        Contribution.id == contribution_id,
+        Contribution.contributor_id == user.id
+    ).first()
+    
+    if not contribution:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contribution not found"
+        )
+    
+    # Can only supplement contributions that need info
+    if contribution.status != "needs_info":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"只能补充状态为'需补充信息'的贡献，当前状态: {contribution.status}"
+        )
+    
+    # Update the contribution with supplementary info
+    # Append the additional info to the existing description
+    original_review_comment = contribution.review_comment or ""
+    supplement_note = f"\n\n--- 补充信息 ({datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}) ---\n{body.additional_info}"
+    
+    if contribution.description:
+        contribution.description = contribution.description + supplement_note
+    else:
+        contribution.description = body.additional_info
+    
+    # Update content_json if provided
+    if body.content_json:
+        if contribution.content_json:
+            # Merge with existing content
+            contribution.content_json = {
+                **contribution.content_json,
+                "supplementary": body.content_json
+            }
+        else:
+            contribution.content_json = body.content_json
+    
+    # Update file path if a new file was uploaded
+    if body.file_path:
+        contribution.file_path = body.file_path
+    
+    # Reset status to pending for re-review
+    contribution.status = "pending"
+    contribution.review_comment = f"{original_review_comment}\n\n[用户已补充信息]"
+    contribution.updated_at = datetime.now(timezone.utc)
+    
+    db.commit()
+    db.refresh(contribution)
+    
+    return ContributionResponse(**contribution.to_dict())
 
 
 # ==================== Helper Functions ====================

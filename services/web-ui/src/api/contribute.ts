@@ -150,6 +150,16 @@ export const contributeApi = {
     const response = await apiClient.get('/api/contribute/leaderboard', { params: { limit } })
     return response.data
   },
+
+  // Supplement a contribution that needs more info
+  supplement: async (contributionId: number, data: {
+    additional_info: string
+    content_json?: Record<string, unknown>
+    file_path?: string
+  }): Promise<Contribution> => {
+    const response = await apiClient.put(`/api/contribute/${contributionId}/supplement`, data)
+    return response.data
+  },
 }
 
 export default contributeApi

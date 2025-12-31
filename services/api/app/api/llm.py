@@ -240,6 +240,9 @@ async def test_provider_connection(
     db: Session = Depends(get_db)
 ):
     """测试 LLM 提供商连接"""
+    import httpx
+    import os
+    
     provider = db.query(LLMProvider).filter(
         LLMProvider.id == provider_id
     ).first()
@@ -250,15 +253,96 @@ async def test_provider_connection(
             detail="Provider not found"
         )
     
-    # TODO: Implement actual connection test
-    # This would involve making a simple API call to the provider
+    # Get API key - from provider config or environment
+    api_key = provider.api_key_encrypted
+    if not api_key:
+        # Try to get from environment based on provider code
+        env_keys = {
+            "qwen": "DASHSCOPE_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "azure": "AZURE_OPENAI_API_KEY",
+        }
+        env_var = env_keys.get(provider.provider_code)
+        if env_var:
+            api_key = os.getenv(env_var)
     
-    return {
-        "provider_id": provider_id,
-        "provider_code": provider.provider_code,
-        "status": "ok",
-        "message": "Connection test successful (mock)"
-    }
+    if not api_key:
+        return {
+            "provider_id": provider_id,
+            "provider_code": provider.provider_code,
+            "success": False,
+            "message": "API Key 未配置"
+        }
+    
+    # Test connection by listing models or making a simple request
+    api_base = provider.api_base_url
+    if not api_base:
+        return {
+            "provider_id": provider_id,
+            "provider_code": provider.provider_code,
+            "success": False,
+            "message": "API Base URL 未配置"
+        }
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Try to list models endpoint (works for most OpenAI-compatible APIs)
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            # Different providers have different endpoints
+            if provider.provider_code == "qwen":
+                # DashScope uses a different endpoint
+                test_url = f"{api_base}/models"
+            else:
+                test_url = f"{api_base}/models"
+            
+            response = await client.get(test_url, headers=headers)
+            
+            if response.status_code == 200:
+                return {
+                    "provider_id": provider_id,
+                    "provider_code": provider.provider_code,
+                    "success": True,
+                    "message": "连接成功"
+                }
+            elif response.status_code == 401:
+                return {
+                    "provider_id": provider_id,
+                    "provider_code": provider.provider_code,
+                    "success": False,
+                    "message": "认证失败，请检查 API Key"
+                }
+            else:
+                return {
+                    "provider_id": provider_id,
+                    "provider_code": provider.provider_code,
+                    "success": False,
+                    "message": f"请求失败: HTTP {response.status_code}"
+                }
+    except httpx.TimeoutException:
+        return {
+            "provider_id": provider_id,
+            "provider_code": provider.provider_code,
+            "success": False,
+            "message": "连接超时，请检查网络或 API 地址"
+        }
+    except httpx.ConnectError:
+        return {
+            "provider_id": provider_id,
+            "provider_code": provider.provider_code,
+            "success": False,
+            "message": "无法连接到服务器，请检查 API 地址"
+        }
+    except Exception as e:
+        return {
+            "provider_id": provider_id,
+            "provider_code": provider.provider_code,
+            "success": False,
+            "message": f"测试失败: {str(e)}"
+        }
 
 
 # ==================== Model Endpoints ====================
@@ -606,6 +690,10 @@ async def test_llm_call(
     db: Session = Depends(get_db)
 ):
     """测试 LLM 调用"""
+    import httpx
+    import os
+    import time
+    
     # Find the model
     model = db.query(LLMModel).filter(
         LLMModel.model_code == body.model_code
@@ -623,18 +711,108 @@ async def test_llm_call(
             detail=f"Model '{body.model_code}' is not active"
         )
     
-    # TODO: Implement actual LLM call test
-    # This would involve:
-    # 1. Getting the provider and API key
-    # 2. Making a test API call
-    # 3. Returning the response
+    # Get provider
+    provider = db.query(LLMProvider).filter(
+        LLMProvider.id == model.provider_id
+    ).first()
     
-    return {
-        "model_code": body.model_code,
-        "prompt": body.prompt,
-        "status": "ok",
-        "response": f"[Mock response] This is a test response for model {body.model_code}",
-        "tokens_used": 50,
-        "latency_ms": 250
-    }
+    if not provider:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Provider not found for this model"
+        )
+    
+    # Get API key
+    api_key = provider.api_key_encrypted
+    if not api_key:
+        env_keys = {
+            "qwen": "DASHSCOPE_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "azure": "AZURE_OPENAI_API_KEY",
+        }
+        env_var = env_keys.get(provider.provider_code)
+        if env_var:
+            api_key = os.getenv(env_var)
+    
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="API Key not configured for this provider"
+        )
+    
+    api_base = provider.api_base_url
+    if not api_base:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="API Base URL not configured for this provider"
+        )
+    
+    # Make test LLM call
+    start_time = time.time()
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            request_body = {
+                "model": body.model_code,
+                "messages": [
+                    {"role": "user", "content": body.prompt}
+                ],
+                "max_tokens": body.max_tokens or 100,
+                "temperature": 0.7
+            }
+            
+            response = await client.post(
+                f"{api_base}/chat/completions",
+                headers=headers,
+                json=request_body
+            )
+            
+            latency_ms = int((time.time() - start_time) * 1000)
+            
+            if response.status_code == 200:
+                data = response.json()
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                usage = data.get("usage", {})
+                
+                return {
+                    "model_code": body.model_code,
+                    "prompt": body.prompt,
+                    "success": True,
+                    "response": content,
+                    "tokens_used": usage.get("total_tokens", 0),
+                    "latency_ms": latency_ms
+                }
+            else:
+                error_msg = response.text[:200] if response.text else f"HTTP {response.status_code}"
+                return {
+                    "model_code": body.model_code,
+                    "prompt": body.prompt,
+                    "success": False,
+                    "response": f"请求失败: {error_msg}",
+                    "tokens_used": 0,
+                    "latency_ms": latency_ms
+                }
+    except httpx.TimeoutException:
+        return {
+            "model_code": body.model_code,
+            "prompt": body.prompt,
+            "success": False,
+            "response": "请求超时",
+            "tokens_used": 0,
+            "latency_ms": int((time.time() - start_time) * 1000)
+        }
+    except Exception as e:
+        return {
+            "model_code": body.model_code,
+            "prompt": body.prompt,
+            "success": False,
+            "response": f"调用失败: {str(e)}",
+            "tokens_used": 0,
+            "latency_ms": int((time.time() - start_time) * 1000)
+        }
 

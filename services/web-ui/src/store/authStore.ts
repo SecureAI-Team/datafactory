@@ -56,7 +56,7 @@ export const useAuthStore = create<AuthState>()(
       }),
     }),
     {
-      name: 'auth-storage',
+      name: 'web-ui-auth-storage', // Use a unique key to prevent collision with admin-ui
       partialize: (state) => ({
         user: state.user,
         accessToken: state.accessToken,

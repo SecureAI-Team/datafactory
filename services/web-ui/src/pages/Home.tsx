@@ -19,6 +19,7 @@ import {
   X,
   Pencil,
   Check,
+  Paperclip,
 } from 'lucide-react'
 import { useNavigate as useRouterNavigate } from 'react-router-dom'
 import { conversationsApi } from '../api/conversations'
@@ -439,6 +440,29 @@ interface UploadStatus {
   message?: string
 }
 
+// Attached file type for message context
+interface AttachedFile {
+  file: File
+  preview?: string  // Data URL for image preview
+  isImage: boolean
+}
+
+// Supported file types
+const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+const SUPPORTED_DOC_TYPES = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain',
+  'text/markdown',
+]
+
+const FILE_ACCEPT = '.jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md'
+
 export default function Home() {
   const { conversationId } = useParams()
   const navigate = useNavigate()
@@ -447,8 +471,10 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   
   const [input, setInput] = useState('')
+  const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadStatus, setUploadStatus] = useState<UploadStatus | null>(null)
+  const [isDragActive, setIsDragActive] = useState(false)
   const { messages, setMessages, addMessage, updateMessage, isSending, setSending } =
     useConversationStore()
   
@@ -498,13 +524,56 @@ export default function Home() {
     },
   })
   
-  // File upload handler
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // File attachment handler - attach file as message context
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     
     // Reset input so same file can be selected again
     e.target.value = ''
+    
+    processFile(file)
+  }
+  
+  // Remove attached file
+  const handleRemoveAttachment = () => {
+    setAttachedFile(null)
+  }
+  
+  // Get file icon based on extension
+  const getFileIcon = (fileName: string) => {
+    const ext = fileName.split('.').pop()?.toLowerCase()
+    if (['pdf'].includes(ext || '')) return '📄'
+    if (['doc', 'docx'].includes(ext || '')) return '📝'
+    if (['xls', 'xlsx'].includes(ext || '')) return '📊'
+    if (['ppt', 'pptx'].includes(ext || '')) return '📽️'
+    if (['txt', 'md'].includes(ext || '')) return '📃'
+    return '📎'
+  }
+  
+  // Format file size
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + ' B'
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+  }
+  
+  // Process file (shared between file input and drag drop)
+  const processFile = (file: File) => {
+    // Check file type
+    const isImage = SUPPORTED_IMAGE_TYPES.includes(file.type)
+    const isDoc = SUPPORTED_DOC_TYPES.includes(file.type) || 
+                  file.name.endsWith('.md') || 
+                  file.name.endsWith('.txt')
+    
+    if (!isImage && !isDoc) {
+      setUploadStatus({
+        type: 'error',
+        message: '不支持的文件类型，请上传图片或文档'
+      })
+      setTimeout(() => setUploadStatus(null), 4000)
+      return
+    }
     
     // Check file size (50MB limit)
     const maxSize = 50 * 1024 * 1024
@@ -513,40 +582,50 @@ export default function Home() {
         type: 'error',
         message: '文件大小超过 50MB 限制'
       })
+      setTimeout(() => setUploadStatus(null), 4000)
       return
     }
     
-    setIsUploading(true)
-    setUploadStatus({
-      type: 'uploading',
-      fileName: file.name
-    })
+    // Create preview for images
+    if (isImage) {
+      const reader = new FileReader()
+      reader.onload = (event) => {
+        setAttachedFile({
+          file,
+          preview: event.target?.result as string,
+          isImage: true,
+        })
+      }
+      reader.readAsDataURL(file)
+    } else {
+      setAttachedFile({
+        file,
+        isImage: false,
+      })
+    }
+  }
+  
+  // Drag and drop handlers
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!isDragActive) setIsDragActive(true)
+  }
+  
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragActive(false)
+  }
+  
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragActive(false)
     
-    try {
-      await contributeApi.uploadFile(file, {
-        title: file.name,
-        description: `通过对话界面上传`,
-        ku_type_code: 'field.signal',
-        conversation_id: conversationId,
-        visibility: 'internal',
-      })
-      
-      setUploadStatus({
-        type: 'success',
-        message: `文件 "${file.name}" 上传成功，待审核后入库`
-      })
-      
-      // Auto clear success message after 5 seconds
-      setTimeout(() => {
-        setUploadStatus((prev) => prev?.type === 'success' ? null : prev)
-      }, 5000)
-    } catch (err) {
-      setUploadStatus({
-        type: 'error',
-        message: `上传失败: ${err instanceof Error ? err.message : '未知错误'}`
-      })
-    } finally {
-      setIsUploading(false)
+    const file = e.dataTransfer.files?.[0]
+    if (file) {
+      processFile(file)
     }
   }
   
@@ -562,10 +641,21 @@ export default function Home() {
   }, [messages])
   
   const handleSend = async () => {
-    if (!input.trim() || isSending) return
+    if ((!input.trim() && !attachedFile) || isSending) return
     
     const content = input.trim()
+    const fileToUpload = attachedFile
+    
+    // Clear input and attachment
     setInput('')
+    setAttachedFile(null)
+    
+    // Build display content for user message
+    let displayContent = content
+    if (fileToUpload) {
+      const fileInfo = `📎 ${fileToUpload.file.name}`
+      displayContent = content ? `${fileInfo}\n\n${content}` : fileInfo
+    }
     
     // If no conversation, create one first
     if (!conversationId) {
@@ -577,7 +667,7 @@ export default function Home() {
         id: Date.now(),
         message_id: `temp-${Date.now()}`,
         role: 'user',
-        content,
+        content: displayContent,
         sources: [],
         feedback: null,
         tokens_used: null,
@@ -587,8 +677,26 @@ export default function Home() {
       }
       addMessage(userMessage)
       
+      // Upload file first if attached, then send message
+      if (fileToUpload) {
+        try {
+          setIsUploading(true)
+          await contributeApi.uploadFile(fileToUpload.file, {
+            title: fileToUpload.file.name,
+            description: content || `通过对话界面上传`,
+            ku_type_code: 'field.signal',
+            conversation_id: conv.conversation_id,
+            visibility: 'internal',
+          })
+          setIsUploading(false)
+        } catch (err) {
+          setIsUploading(false)
+          console.error('File upload failed:', err)
+        }
+      }
+      
       // Send message
-      sendMutation.mutate({ convId: conv.conversation_id, content })
+      sendMutation.mutate({ convId: conv.conversation_id, content: displayContent })
     } else {
       setSending(true)
       
@@ -597,7 +705,7 @@ export default function Home() {
         id: Date.now(),
         message_id: `temp-${Date.now()}`,
         role: 'user',
-        content,
+        content: displayContent,
         sources: [],
         feedback: null,
         tokens_used: null,
@@ -607,8 +715,26 @@ export default function Home() {
       }
       addMessage(userMessage)
       
+      // Upload file first if attached, then send message
+      if (fileToUpload) {
+        try {
+          setIsUploading(true)
+          await contributeApi.uploadFile(fileToUpload.file, {
+            title: fileToUpload.file.name,
+            description: content || `通过对话界面上传`,
+            ku_type_code: 'field.signal',
+            conversation_id: conversationId,
+            visibility: 'internal',
+          })
+          setIsUploading(false)
+        } catch (err) {
+          setIsUploading(false)
+          console.error('File upload failed:', err)
+        }
+      }
+      
       // Send message
-      sendMutation.mutate({ convId: conversationId, content })
+      sendMutation.mutate({ convId: conversationId, content: displayContent })
     }
   }
   
@@ -766,32 +892,11 @@ export default function Home() {
       {/* Input Area */}
       <div className="border-t border-dark-800 p-4 bg-dark-900/50">
         <div className="max-w-4xl mx-auto">
-          {/* Upload Status Bar */}
-          {uploadStatus && (
-            <div className={clsx(
-              'mb-3 p-3 rounded-lg flex items-center gap-3',
-              uploadStatus.type === 'uploading' && 'bg-dark-800',
-              uploadStatus.type === 'success' && 'bg-green-500/10 border border-green-500/30',
-              uploadStatus.type === 'error' && 'bg-red-500/10 border border-red-500/30'
-            )}>
-              {uploadStatus.type === 'uploading' && (
-                <>
-                  <Loader2 size={16} className="animate-spin text-primary-400" />
-                  <span className="text-sm">上传中: {uploadStatus.fileName}</span>
-                </>
-              )}
-              {uploadStatus.type === 'success' && (
-                <>
-                  <Check size={16} className="text-green-400" />
-                  <span className="text-sm text-green-400">{uploadStatus.message}</span>
-                </>
-              )}
-              {uploadStatus.type === 'error' && (
-                <>
-                  <X size={16} className="text-red-400" />
-                  <span className="text-sm text-red-400">{uploadStatus.message}</span>
-                </>
-              )}
+          {/* Error Status Bar */}
+          {uploadStatus?.type === 'error' && (
+            <div className="mb-3 p-3 rounded-lg flex items-center gap-3 bg-red-500/10 border border-red-500/30">
+              <X size={16} className="text-red-400" />
+              <span className="text-sm text-red-400">{uploadStatus.message}</span>
               <button
                 onClick={() => setUploadStatus(null)}
                 className="ml-auto text-dark-400 hover:text-dark-200"
@@ -801,36 +906,104 @@ export default function Home() {
             </div>
           )}
           
-          <div className="relative flex items-end gap-2">
-            {/* File Upload Button */}
+          {/* Attached File Preview - Above Input */}
+          {attachedFile && (
+            <div className="mb-3 p-3 bg-dark-800/80 rounded-lg border border-dark-700 flex items-center gap-3 animate-fade-in">
+              {/* Preview */}
+              {attachedFile.isImage && attachedFile.preview ? (
+                <div className="w-16 h-16 rounded-lg overflow-hidden bg-dark-700 shrink-0">
+                  <img 
+                    src={attachedFile.preview} 
+                    alt="Preview" 
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              ) : (
+                <div className="w-12 h-12 rounded-lg bg-dark-700 flex items-center justify-center shrink-0">
+                  <span className="text-2xl">{getFileIcon(attachedFile.file.name)}</span>
+                </div>
+              )}
+              
+              {/* File Info */}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-dark-100 truncate">
+                  {attachedFile.file.name}
+                </p>
+                <p className="text-xs text-dark-400">
+                  {formatFileSize(attachedFile.file.size)}
+                  {attachedFile.isImage && ' • 图片'}
+                </p>
+              </div>
+              
+              {/* Remove Button */}
+              <button
+                onClick={handleRemoveAttachment}
+                className="p-1.5 rounded-full hover:bg-dark-600 text-dark-400 hover:text-dark-200 transition-colors"
+                title="移除附件"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
+          
+          {/* Input Container */}
+          <div 
+            className={clsx(
+              "relative flex items-end gap-0 bg-dark-800 rounded-xl border transition-colors",
+              isDragActive 
+                ? "border-primary-500 bg-primary-500/5 ring-2 ring-primary-500/20" 
+                : "border-dark-700 focus-within:border-primary-500/50"
+            )}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            {/* Drag overlay */}
+            {isDragActive && (
+              <div className="absolute inset-0 flex items-center justify-center bg-primary-500/10 rounded-xl pointer-events-none z-10">
+                <div className="flex items-center gap-2 text-primary-400 font-medium">
+                  <Paperclip size={20} />
+                  <span>放开以添加附件</span>
+                </div>
+              </div>
+            )}
+            {/* File Attachment Button */}
             <input
               type="file"
               ref={fileInputRef}
-              onChange={handleFileChange}
-              accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,.csv"
+              onChange={handleFileSelect}
+              accept={FILE_ACCEPT}
               className="hidden"
             />
             <button
               onClick={() => fileInputRef.current?.click()}
-              disabled={isUploading}
-              className="btn-ghost p-3 shrink-0"
-              title="上传文件"
+              disabled={isUploading || isSending}
+              className={clsx(
+                'p-3 shrink-0 transition-colors rounded-l-xl',
+                'hover:bg-dark-700/50 active:bg-dark-700',
+                attachedFile ? 'text-primary-400' : 'text-dark-400 hover:text-dark-200'
+              )}
+              title="添加附件"
             >
               {isUploading ? (
-                <Loader2 size={18} className="animate-spin text-primary-400" />
+                <Loader2 size={20} className="animate-spin text-primary-400" />
               ) : (
-                <Upload size={18} className="text-dark-400 hover:text-primary-400" />
+                <Paperclip size={20} />
               )}
             </button>
             
+            {/* Divider */}
+            <div className="w-px h-6 bg-dark-700 self-center" />
+            
+            {/* Text Input */}
             <div className="flex-1 relative">
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="输入问题或使用快捷命令 (/案例, /报价, /方案, /对比, /话术)"
+                placeholder={attachedFile ? "描述你想了解的内容..." : "输入问题或使用快捷命令 (/案例, /报价, /方案...)"}
                 rows={1}
-                className="input pr-12 py-3 resize-none min-h-[48px] max-h-[200px] w-full"
+                className="w-full bg-transparent text-dark-100 placeholder-dark-500 py-3 px-3 resize-none min-h-[48px] max-h-[200px] focus:outline-none"
                 style={{ height: 'auto' }}
                 onInput={(e) => {
                   const target = e.target as HTMLTextAreaElement
@@ -838,21 +1011,31 @@ export default function Home() {
                   target.style.height = Math.min(target.scrollHeight, 200) + 'px'
                 }}
               />
-              <button
-                onClick={handleSend}
-                disabled={!input.trim() || isSending}
-                className="absolute right-2 bottom-2 btn-primary p-2"
-              >
-                {isSending ? (
-                  <Loader2 size={18} className="animate-spin" />
-                ) : (
-                  <Send size={18} />
-                )}
-              </button>
             </div>
+            
+            {/* Send Button */}
+            <button
+              onClick={handleSend}
+              disabled={(!input.trim() && !attachedFile) || isSending}
+              className={clsx(
+                'p-3 shrink-0 transition-all rounded-r-xl',
+                (!input.trim() && !attachedFile) || isSending
+                  ? 'text-dark-500 cursor-not-allowed'
+                  : 'text-primary-400 hover:bg-primary-500/10 active:bg-primary-500/20'
+              )}
+              title="发送消息"
+            >
+              {isSending ? (
+                <Loader2 size={20} className="animate-spin" />
+              ) : (
+                <Send size={20} />
+              )}
+            </button>
           </div>
+          
+          {/* Help Text */}
           <p className="text-xs text-dark-500 mt-2 text-center">
-            按 Enter 发送，Shift+Enter 换行 | 点击 <Upload size={12} className="inline" /> 上传文件
+            Enter 发送 · Shift+Enter 换行 · 点击 <Paperclip size={10} className="inline" /> 添加附件
           </p>
         </div>
       </div>

@@ -102,14 +102,18 @@ async def list_scenarios(
     db: Session = Depends(get_db)
 ):
     """获取场景列表"""
-    query = db.query(ScenarioConfig)
-    
-    if active_only:
-        query = query.filter(ScenarioConfig.is_active == True)
-    
-    scenarios = query.order_by(ScenarioConfig.sort_order).all()
-    
-    return {"scenarios": [s.to_dict() for s in scenarios]}
+    try:
+        query = db.query(ScenarioConfig)
+        
+        if active_only:
+            query = query.filter(ScenarioConfig.is_active == True)
+        
+        scenarios = query.order_by(ScenarioConfig.sort_order).all()
+        
+        return {"scenarios": [s.to_dict() for s in scenarios]}
+    except Exception:
+        # Table may not exist yet
+        return {"scenarios": []}
 
 
 @router.get("/scenarios/{scenario_id}")
@@ -249,20 +253,24 @@ async def list_prompts(
     db: Session = Depends(get_db)
 ):
     """获取 Prompt 列表"""
-    query = db.query(PromptTemplate)
-    
-    if type_filter:
-        query = query.filter(PromptTemplate.type == type_filter)
-    
-    if scenario_id:
-        query = query.filter(PromptTemplate.scenario_id == scenario_id)
-    
-    if active_only:
-        query = query.filter(PromptTemplate.is_active == True)
-    
-    prompts = query.order_by(PromptTemplate.name).all()
-    
-    return {"prompts": [p.to_dict() for p in prompts]}
+    try:
+        query = db.query(PromptTemplate)
+        
+        if type_filter:
+            query = query.filter(PromptTemplate.type == type_filter)
+        
+        if scenario_id:
+            query = query.filter(PromptTemplate.scenario_id == scenario_id)
+        
+        if active_only:
+            query = query.filter(PromptTemplate.is_active == True)
+        
+        prompts = query.order_by(PromptTemplate.name).all()
+        
+        return {"prompts": [p.to_dict() for p in prompts]}
+    except Exception:
+        # Table may not exist yet
+        return {"prompts": []}
 
 
 @router.get("/prompts/{prompt_id}")
@@ -494,20 +502,24 @@ async def list_ku_types(
     db: Session = Depends(get_db)
 ):
     """获取 KU 类型列表"""
-    query = db.query(KUTypeDefinition)
-    
-    if category:
-        query = query.filter(KUTypeDefinition.category == category)
-    
-    if active_only:
-        query = query.filter(KUTypeDefinition.is_active == True)
-    
-    ku_types = query.order_by(
-        KUTypeDefinition.category,
-        KUTypeDefinition.sort_order
-    ).all()
-    
-    return {"ku_types": [t.to_dict() for t in ku_types]}
+    try:
+        query = db.query(KUTypeDefinition)
+        
+        if category:
+            query = query.filter(KUTypeDefinition.category == category)
+        
+        if active_only:
+            query = query.filter(KUTypeDefinition.is_active == True)
+        
+        ku_types = query.order_by(
+            KUTypeDefinition.category,
+            KUTypeDefinition.sort_order
+        ).all()
+        
+        return {"ku_types": [t.to_dict() for t in ku_types]}
+    except Exception:
+        # Table may not exist yet
+        return {"ku_types": []}
 
 
 @router.get("/ku-types/{type_code}")
@@ -674,14 +686,18 @@ async def get_parameters(
     db: Session = Depends(get_db)
 ):
     """获取参数定义列表"""
-    query = db.query(ParameterDefinition)
-    
-    if category:
-        query = query.filter(ParameterDefinition.category == category)
-    
-    parameters = query.order_by(ParameterDefinition.category, ParameterDefinition.name).all()
-    
-    return {"parameters": [p.to_dict() for p in parameters]}
+    try:
+        query = db.query(ParameterDefinition)
+        
+        if category:
+            query = query.filter(ParameterDefinition.category == category)
+        
+        parameters = query.order_by(ParameterDefinition.category, ParameterDefinition.name).all()
+        
+        return {"parameters": [p.to_dict() for p in parameters]}
+    except Exception:
+        # Table may not exist yet
+        return {"parameters": []}
 
 
 @router.get("/parameters/{param_id}")
@@ -848,14 +864,18 @@ async def get_calc_rules(
     db: Session = Depends(get_db)
 ):
     """获取计算规则列表"""
-    query = db.query(CalculationRule)
-    
-    if is_active is not None:
-        query = query.filter(CalculationRule.is_active == is_active)
-    
-    rules = query.order_by(CalculationRule.name).all()
-    
-    return {"rules": [r.to_dict() for r in rules]}
+    try:
+        query = db.query(CalculationRule)
+        
+        if is_active is not None:
+            query = query.filter(CalculationRule.is_active == is_active)
+        
+        rules = query.order_by(CalculationRule.name).all()
+        
+        return {"rules": [r.to_dict() for r in rules]}
+    except Exception:
+        # Table may not exist yet
+        return {"rules": []}
 
 
 @router.get("/calc-rules/{rule_id}")

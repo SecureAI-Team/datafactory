@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Upload,
   FileText,
@@ -11,6 +11,9 @@ import {
   BookOpen,
   AlertCircle,
   Loader2,
+  MessageSquare,
+  Send,
+  X,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { contributeApi, Contribution, ContributionStats } from '../api/contribute'
@@ -71,7 +74,12 @@ function StatCard({
   )
 }
 
-function ContributionItem({ contribution }: { contribution: Contribution }) {
+interface ContributionItemProps {
+  contribution: Contribution
+  onSupplement: (contribution: Contribution) => void
+}
+
+function ContributionItem({ contribution, onSupplement }: ContributionItemProps) {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'approved':
@@ -80,6 +88,8 @@ function ContributionItem({ contribution }: { contribution: Contribution }) {
         return 'bg-yellow-500/20'
       case 'rejected':
         return 'bg-red-500/20'
+      case 'needs_info':
+        return 'bg-orange-500/20'
       default:
         return 'bg-dark-700'
     }
@@ -93,8 +103,25 @@ function ContributionItem({ contribution }: { contribution: Contribution }) {
         return <Clock className="text-yellow-400" size={20} />
       case 'rejected':
         return <XCircle className="text-red-400" size={20} />
+      case 'needs_info':
+        return <MessageSquare className="text-orange-400" size={20} />
       default:
         return <AlertCircle className="text-dark-400" size={20} />
+    }
+  }
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'approved':
+        return '已入库'
+      case 'pending':
+        return '审核中'
+      case 'rejected':
+        return '已拒绝'
+      case 'needs_info':
+        return '需补充信息'
+      default:
+        return status
     }
   }
 
@@ -118,49 +145,182 @@ function ContributionItem({ contribution }: { contribution: Contribution }) {
     return code ? types[code] || code : '未分类'
   }
 
+  // Extract the reviewer's questions from the review_comment
+  const getReviewerQuestions = () => {
+    if (!contribution.review_comment) return null
+    // The comment format is: "需要补充信息: {questions}"
+    const match = contribution.review_comment.match(/需要补充信息:\s*(.+)/s)
+    return match ? match[1] : contribution.review_comment
+  }
+
   return (
-    <div className="card p-4 flex items-center gap-4">
-      {/* Status Icon */}
-      <div
-        className={clsx(
-          'w-10 h-10 rounded-lg flex items-center justify-center',
-          getStatusColor(contribution.status)
-        )}
-      >
-        {getStatusIcon(contribution.status)}
-      </div>
+    <div className={clsx(
+      "card p-4",
+      contribution.status === 'needs_info' && 'border border-orange-500/30'
+    )}>
+      <div className="flex items-center gap-4">
+        {/* Status Icon */}
+        <div
+          className={clsx(
+            'w-10 h-10 rounded-lg flex items-center justify-center shrink-0',
+            getStatusColor(contribution.status)
+          )}
+        >
+          {getStatusIcon(contribution.status)}
+        </div>
 
-      {/* Info */}
-      <div className="flex-1">
-        <h3 className="font-medium">{contribution.title || contribution.file_name || '未命名贡献'}</h3>
-        <p className="text-sm text-dark-400">
-          类型: {getKUTypeName(contribution.ku_type_code)} | 
-          产品: {contribution.product_id || '未关联'} |{' '}
-          {contribution.status === 'approved'
-            ? `入库于 ${formatDate(contribution.reviewed_at || contribution.updated_at || contribution.created_at)}`
-            : `提交于 ${formatDate(contribution.created_at)}`}
-        </p>
-        {contribution.review_comment && contribution.status === 'rejected' && (
-          <p className="text-sm text-red-400 mt-1">
-            审核意见: {contribution.review_comment}
+        {/* Info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <h3 className="font-medium truncate">{contribution.title || contribution.file_name || '未命名贡献'}</h3>
+            {contribution.status === 'needs_info' && (
+              <span className="text-xs bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded shrink-0">
+                {getStatusLabel(contribution.status)}
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-dark-400">
+            类型: {getKUTypeName(contribution.ku_type_code)} | 
+            产品: {contribution.product_id || '未关联'} |{' '}
+            {contribution.status === 'approved'
+              ? `入库于 ${formatDate(contribution.reviewed_at || contribution.updated_at || contribution.created_at)}`
+              : `提交于 ${formatDate(contribution.created_at)}`}
           </p>
+          {contribution.review_comment && contribution.status === 'rejected' && (
+            <p className="text-sm text-red-400 mt-1">
+              审核意见: {contribution.review_comment}
+            </p>
+          )}
+        </div>
+
+        {/* Citation Count for approved */}
+        {contribution.status === 'approved' && (
+          <div className="text-right shrink-0">
+            <p className="text-lg font-bold text-primary-400">-</p>
+            <p className="text-xs text-dark-400">引用待统计</p>
+          </div>
+        )}
+
+        {/* Supplement button for needs_info */}
+        {contribution.status === 'needs_info' && (
+          <button
+            onClick={() => onSupplement(contribution)}
+            className="btn-primary py-2 px-4 shrink-0"
+          >
+            <Send size={16} />
+            补充信息
+          </button>
         )}
       </div>
 
-      {/* Citation Count - Note: citation_count may need to come from a different endpoint */}
-      {contribution.status === 'approved' && (
-        <div className="text-right">
-          <p className="text-lg font-bold text-primary-400">-</p>
-          <p className="text-xs text-dark-400">引用待统计</p>
+      {/* Show reviewer's questions for needs_info status */}
+      {contribution.status === 'needs_info' && contribution.review_comment && (
+        <div className="mt-3 p-3 bg-orange-500/10 border border-orange-500/20 rounded-lg">
+          <p className="text-sm text-orange-300 font-medium mb-1">审核员需要您补充以下信息：</p>
+          <p className="text-sm text-orange-200">{getReviewerQuestions()}</p>
         </div>
       )}
     </div>
   )
 }
 
+// Supplement Modal Component
+interface SupplementModalProps {
+  contribution: Contribution | null
+  onClose: () => void
+  onSubmit: (contributionId: number, additionalInfo: string) => void
+  isSubmitting: boolean
+}
+
+function SupplementModal({ contribution, onClose, onSubmit, isSubmitting }: SupplementModalProps) {
+  const [additionalInfo, setAdditionalInfo] = useState('')
+
+  if (!contribution) return null
+
+  const getReviewerQuestions = () => {
+    if (!contribution.review_comment) return null
+    const match = contribution.review_comment.match(/需要补充信息:\s*(.+)/s)
+    return match ? match[1] : contribution.review_comment
+  }
+
+  const handleSubmit = () => {
+    if (!additionalInfo.trim()) return
+    onSubmit(contribution.id, additionalInfo.trim())
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-dark-800 rounded-xl shadow-xl max-w-lg w-full max-h-[80vh] overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-dark-700">
+          <h2 className="text-lg font-semibold">补充贡献信息</h2>
+          <button onClick={onClose} className="text-dark-400 hover:text-dark-200">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-4 space-y-4 overflow-y-auto max-h-[calc(80vh-140px)]">
+          {/* Contribution info */}
+          <div className="p-3 bg-dark-700 rounded-lg">
+            <p className="text-sm text-dark-300">贡献标题</p>
+            <p className="font-medium">{contribution.title || contribution.file_name || '未命名'}</p>
+          </div>
+
+          {/* Reviewer's questions */}
+          <div className="p-3 bg-orange-500/10 border border-orange-500/20 rounded-lg">
+            <p className="text-sm text-orange-300 font-medium mb-1">审核员的问题：</p>
+            <p className="text-sm text-orange-200">{getReviewerQuestions()}</p>
+          </div>
+
+          {/* Response input */}
+          <div>
+            <label className="block text-sm font-medium text-dark-300 mb-2">
+              您的回复 <span className="text-red-400">*</span>
+            </label>
+            <textarea
+              value={additionalInfo}
+              onChange={(e) => setAdditionalInfo(e.target.value)}
+              placeholder="请补充审核员需要的信息..."
+              rows={5}
+              className="w-full bg-dark-700 border border-dark-600 rounded-lg p-3 text-sm resize-none focus:border-primary-500 focus:outline-none"
+            />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-end gap-3 p-4 border-t border-dark-700">
+          <button onClick={onClose} className="btn-ghost px-4 py-2">
+            取消
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={!additionalInfo.trim() || isSubmitting}
+            className="btn-primary px-4 py-2 disabled:opacity-50"
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                提交中...
+              </>
+            ) : (
+              <>
+                <Send size={16} />
+                提交补充信息
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function MyData() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [activeTab, setActiveTab] = useState<'contributions' | 'achievements'>('contributions')
+  const [supplementModalContribution, setSupplementModalContribution] = useState<Contribution | null>(null)
   const { user } = useAuthStore()
 
   // Fetch contribution stats
@@ -188,6 +348,26 @@ export default function MyData() {
   })
 
   const contributions = contributionsData?.contributions || []
+
+  // Supplement mutation
+  const supplementMutation = useMutation({
+    mutationFn: ({ contributionId, additionalInfo }: { contributionId: number; additionalInfo: string }) =>
+      contributeApi.supplement(contributionId, { additional_info: additionalInfo }),
+    onSuccess: () => {
+      // Refresh contributions list
+      queryClient.invalidateQueries({ queryKey: ['my-contributions'] })
+      queryClient.invalidateQueries({ queryKey: ['contribution-stats'] })
+      setSupplementModalContribution(null)
+    },
+  })
+
+  const handleSupplement = (contribution: Contribution) => {
+    setSupplementModalContribution(contribution)
+  }
+
+  const handleSupplementSubmit = (contributionId: number, additionalInfo: string) => {
+    supplementMutation.mutate({ contributionId, additionalInfo })
+  }
 
   // Compute which achievements are unlocked based on stats
   const unlockedAchievements = new Set<string>()
@@ -317,7 +497,11 @@ export default function MyData() {
               </div>
             ) : (
               contributions.map((contribution) => (
-                <ContributionItem key={contribution.id} contribution={contribution} />
+                <ContributionItem 
+                  key={contribution.id} 
+                  contribution={contribution} 
+                  onSupplement={handleSupplement}
+                />
               ))
             )}
           </div>
@@ -348,6 +532,14 @@ export default function MyData() {
           </div>
         )}
       </div>
+
+      {/* Supplement Modal */}
+      <SupplementModal
+        contribution={supplementModalContribution}
+        onClose={() => setSupplementModalContribution(null)}
+        onSubmit={handleSupplementSubmit}
+        isSubmitting={supplementMutation.isPending}
+      />
     </div>
   )
 }

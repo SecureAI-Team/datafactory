@@ -297,8 +297,15 @@ export default function Config() {
   
   useEffect(() => {
     if (calcRuleModal.item && !calcRuleModal.isNew) {
+      // Exclude complex object fields to prevent React render errors
+      const { 
+        examples: _examples, 
+        input_schema: _inputSchema, 
+        output_schema: _outputSchema,
+        ...safeFields 
+      } = calcRuleModal.item as unknown as Record<string, unknown>
       calcRuleForm.setFieldsValue({
-        ...calcRuleModal.item,
+        ...safeFields,
         input_params: calcRuleModal.item.input_params?.join(', ') || '',
       })
     } else if (calcRuleModal.isNew) {

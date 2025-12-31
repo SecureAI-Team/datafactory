@@ -136,6 +136,8 @@ export interface CalculationRule {
   code: string
   description?: string
   formula: string
+  input_schema?: Record<string, unknown>
+  output_schema?: Record<string, unknown>
   input_params: string[]
   output_type: string
   examples?: Array<{ input: Record<string, unknown>; output: unknown }>

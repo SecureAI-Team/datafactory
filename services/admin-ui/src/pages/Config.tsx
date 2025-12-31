@@ -302,11 +302,20 @@ export default function Config() {
         examples: _examples, 
         input_schema: _inputSchema, 
         output_schema: _outputSchema,
+        input_params: _inputParams,
         ...safeFields 
       } = calcRuleModal.item as unknown as Record<string, unknown>
+      
+      // Convert input_params to comma-separated string for the form
+      const inputParamsStr = Array.isArray(calcRuleModal.item.input_params)
+        ? calcRuleModal.item.input_params.map((p: unknown) => 
+            typeof p === 'string' ? p : (p as { name?: string })?.name || ''
+          ).filter(Boolean).join(', ')
+        : ''
+      
       calcRuleForm.setFieldsValue({
         ...safeFields,
-        input_params: calcRuleModal.item.input_params?.join(', ') || '',
+        input_params: inputParamsStr,
       })
     } else if (calcRuleModal.isNew) {
       calcRuleForm.resetFields()
@@ -409,9 +418,10 @@ export default function Config() {
   const handleTestCalcRule = () => {
     if (!calcTestModal.rule) return
     const inputs: Record<string, unknown> = {}
-    calcTestModal.rule.input_params.forEach(param => {
-      const val = calcTestInputs[param]
-      inputs[param] = isNaN(Number(val)) ? val : Number(val)
+    const paramNames = getParamNames(calcTestModal.rule.input_params as unknown[])
+    paramNames.forEach(paramName => {
+      const val = calcTestInputs[paramName]
+      inputs[paramName] = isNaN(Number(val)) ? val : Number(val)
     })
     testCalcRuleMutation.mutate({ ruleId: calcTestModal.rule.id, inputs })
   }
@@ -571,6 +581,20 @@ export default function Config() {
     },
   ]
   
+  // Helper to extract param name from input_params (handles both string and object formats)
+  const getParamName = (param: unknown): string => {
+    if (typeof param === 'string') return param
+    if (typeof param === 'object' && param !== null && 'name' in param) {
+      return (param as { name: string }).name
+    }
+    return String(param)
+  }
+  
+  const getParamNames = (params: unknown[]): string[] => {
+    if (!params) return []
+    return params.map(getParamName)
+  }
+  
   // Calc rule columns
   const calcRuleColumns = [
     { title: '规则名称', dataIndex: 'name', key: 'name' },
@@ -580,7 +604,7 @@ export default function Config() {
       title: '输入参数', 
       dataIndex: 'input_params', 
       key: 'input_params',
-      render: (params: string[]) => params?.map((p: string) => <Tag key={p}>{p}</Tag>)
+      render: (params: unknown[]) => getParamNames(params).map((name: string) => <Tag key={name}>{name}</Tag>)
     },
     {
       title: '状态',
@@ -1237,14 +1261,14 @@ export default function Config() {
             <div style={{ marginBottom: 16 }}>
               <Text strong>输入参数:</Text>
               <div style={{ marginTop: 8 }}>
-                {calcTestModal.rule.input_params.map(param => (
-                  <div key={param} style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Tag>{param}</Tag>
+                {getParamNames(calcTestModal.rule.input_params as unknown[]).map(paramName => (
+                  <div key={paramName} style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Tag>{paramName}</Tag>
                     <InputNumber
                       style={{ flex: 1 }}
-                      placeholder={`输入 ${param} 的值`}
-                      value={calcTestInputs[param] ? Number(calcTestInputs[param]) : undefined}
-                      onChange={(value) => setCalcTestInputs(prev => ({ ...prev, [param]: String(value || '') }))}
+                      placeholder={`输入 ${paramName} 的值`}
+                      value={calcTestInputs[paramName] ? Number(calcTestInputs[paramName]) : undefined}
+                      onChange={(value) => setCalcTestInputs(prev => ({ ...prev, [paramName]: String(value || '') }))}
                     />
                   </div>
                 ))}

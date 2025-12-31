@@ -129,6 +129,15 @@ export interface CreateParameterRequest {
   is_system?: boolean
 }
 
+// Input parameter definition for calculation rules
+export interface InputParam {
+  name: string
+  type: string
+  required?: boolean
+  default?: unknown
+  description?: string
+}
+
 // Calculation Rule types
 export interface CalculationRule {
   id: number
@@ -138,7 +147,7 @@ export interface CalculationRule {
   formula: string
   input_schema?: Record<string, unknown>
   output_schema?: Record<string, unknown>
-  input_params: string[]
+  input_params: InputParam[] | string[]  // Can be either object array or string array
   output_type: string
   examples?: Array<{ input: Record<string, unknown>; output: unknown }>
   is_active: boolean

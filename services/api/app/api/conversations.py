@@ -970,7 +970,19 @@ async def _generate_rag_response(
 - **重点内容**：使用 **加粗** 或 `行内代码`
 """
     
+    # 检测搜索结果是否真正匹配用户需求
+    has_good_matches = False
+    low_quality_threshold = 0.35  # 低于此分数认为不匹配
+    
     if context_parts:
+        # 检查平均分数 - 如果所有结果分数都很低，说明没有好的匹配
+        avg_score = sum(s.get("score", 0) for s in sources) / len(sources) if sources else 0
+        max_score = max((s.get("score", 0) for s in sources), default=0)
+        has_good_matches = max_score > low_quality_threshold
+        
+        logger.info(f"Search quality: max_score={max_score:.3f}, avg_score={avg_score:.3f}, has_good_matches={has_good_matches}")
+    
+    if context_parts and has_good_matches:
         context = "\n\n---\n\n".join(context_parts)
         system_prompt = f"""你是一个专业的知识助手。请基于以下检索到的知识内容回答用户问题。
 
@@ -982,9 +994,29 @@ async def _generate_rag_response(
 3. 如果检索内容不足以回答问题，请如实说明
 4. 使用专业但易懂的语言
 {format_instruction}"""
+    elif context_parts and not has_good_matches:
+        # 有结果但不匹配 - 返回相关内容但邀请贡献
+        context = "\n\n---\n\n".join(context_parts)
+        system_prompt = f"""你是一个专业的知识助手。用户查询的内容在知识库中没有直接匹配的资料，但找到了一些可能相关的内容。
+
+{context}
+
+回答要求：
+1. 首先明确告知用户：目前知识库中没有找到与"{query}"直接相关的资料
+2. 如果上述相关内容对用户有参考价值，可以简要提及
+3. **重点**：邀请用户贡献相关材料，例如：
+   "如果您手上有相关资料，欢迎通过上传功能分享给我们，帮助丰富知识库！"
+4. 保持友好和专业的语气
+{format_instruction}"""
     else:
-        system_prompt = """你是一个专业的知识助手。当前知识库未找到相关内容。
-请告知用户暂无相关资料，并询问是否可以提供更多信息帮助完善知识库。"""
+        system_prompt = f"""你是一个专业的知识助手。当前知识库未找到与用户查询相关的内容。
+
+回答要求：
+1. 告知用户：目前知识库中暂无与"{query}"相关的资料
+2. **重要**：积极邀请用户贡献材料：
+   "如果您有相关资料，欢迎通过上传功能分享给我们！您的贡献将帮助我们完善知识库，也能帮助到其他同事。"
+3. 可以询问用户是否需要其他帮助
+4. 保持友好和专业的语气"""
     
     # 5. 调用 LLM 生成回答
     try:

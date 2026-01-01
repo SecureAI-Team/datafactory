@@ -1360,10 +1360,14 @@ async def answer_interaction(
         session.status = 'completed'
         db.commit()
         
+        # Generate human-readable labeled answers
+        labeled_answers = _format_answers_with_labels(flow.steps, answers)
+        
         return {
             "session": session.to_dict(),
             "completed": True,
             "collected_answers": answers,
+            "labeled_answers": labeled_answers,  # Human-readable version
             "on_complete": flow.on_complete
         }
     
@@ -1512,4 +1516,49 @@ def _count_applicable_steps(steps: List[dict], answers: dict) -> int:
         count += 1
     
     return count
+
+
+def _format_answers_with_labels(steps: List[dict], answers: dict) -> dict:
+    """Convert raw answer IDs to human-readable labels"""
+    labeled = {}
+    
+    # Build a lookup map: step_id -> {question, options_map}
+    step_map = {}
+    for step in steps:
+        step_id = step.get('id')
+        question = step.get('question', step_id)
+        options = step.get('options', [])
+        
+        # Build option_id -> label map
+        option_map = {}
+        for opt in options:
+            opt_id = opt.get('id') if isinstance(opt, dict) else opt
+            opt_label = opt.get('label', opt_id) if isinstance(opt, dict) else opt
+            option_map[opt_id] = opt_label
+        
+        step_map[step_id] = {
+            'question': question,
+            'options': option_map
+        }
+    
+    # Convert answers
+    for step_id, answer in answers.items():
+        step_info = step_map.get(step_id)
+        if not step_info:
+            # Unknown step, use raw values
+            labeled[step_id] = answer
+            continue
+        
+        question = step_info['question']
+        option_map = step_info['options']
+        
+        if isinstance(answer, list):
+            # Multiple select - convert each option ID to label
+            labeled_values = [option_map.get(v, v) for v in answer]
+            labeled[question] = labeled_values
+        else:
+            # Single select or input - convert if in option_map
+            labeled[question] = option_map.get(answer, answer)
+    
+    return labeled
 

@@ -74,6 +74,7 @@ export interface AnswerInteractionResponse {
     total: number
   }
   collected_answers?: Record<string, string | string[]>
+  labeled_answers?: Record<string, string | string[]>  // Human-readable version
   on_complete?: string
 }
 

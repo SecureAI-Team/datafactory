@@ -714,8 +714,9 @@ export default function Home() {
         const messageId = `interaction-${sessionId}`
         updateMessage(messageId, { interaction: undefined })
         
-        // Construct a summary of answers and send as a follow-up message
-        const answersText = Object.entries(result.collected_answers || {})
+        // Construct a summary of answers - use labeled_answers if available (human-readable)
+        const answersToDisplay = result.labeled_answers || result.collected_answers || {}
+        const answersText = Object.entries(answersToDisplay)
           .map(([key, val]) => `${key}: ${Array.isArray(val) ? val.join(', ') : val}`)
           .join('\n')
         

@@ -604,7 +604,7 @@ export default function Config() {
       title: '输入参数', 
       dataIndex: 'input_params', 
       key: 'input_params',
-      render: (params: unknown[]) => getParamNames(params).map((name: string) => <Tag key={name}>{name}</Tag>)
+      render: (params: string[]) => (params || []).map((name: string) => <Tag key={name}>{name}</Tag>)
     },
     {
       title: '状态',
@@ -814,7 +814,14 @@ export default function Config() {
           </div>
           <Spin spinning={loadingCalcRules}>
             <Table 
-              dataSource={calcRulesData?.rules ?? []} 
+              dataSource={(calcRulesData?.rules ?? []).map(rule => ({
+                ...rule,
+                // Transform complex objects to prevent React #31 error
+                input_params: getParamNames(rule.input_params as unknown[]),
+                input_schema: undefined,
+                output_schema: undefined,
+                examples: undefined,
+              }))} 
               columns={calcRuleColumns} 
               rowKey="id" 
               locale={{ emptyText: '暂无计算规则' }}

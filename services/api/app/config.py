@@ -30,8 +30,8 @@ class Settings:
     n8n_webhook = os.getenv("N8N_WEBHOOK_URL")
     
     # Airflow configuration
-    airflow_url = os.getenv("AIRFLOW_URL", "http://airflow-webserver:8080")
-    airflow_user = os.getenv("AIRFLOW_USER", "airflow")
-    airflow_password = os.getenv("AIRFLOW_PASSWORD", "airflow")
+    airflow_url = os.getenv("AIRFLOW_URL", "http://airflow:8080")
+    airflow_user = os.getenv("AIRFLOW_USER", "admin")
+    airflow_password = os.getenv("AIRFLOW_PASSWORD", "admin123")
 
 settings = Settings()

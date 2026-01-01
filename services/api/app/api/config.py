@@ -4,6 +4,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import desc
 
 from ..db import get_db
@@ -1331,11 +1332,12 @@ async def answer_interaction(
             detail="Interaction flow not found"
         )
     
-    # Update collected answers
-    answers = session.collected_answers or {}
+    # Update collected answers - use dict copy and flag_modified for JSONB
+    answers = dict(session.collected_answers or {})
     answers[body.step_id] = body.answer
     session.collected_answers = answers
     session.current_step += 1
+    flag_modified(session, "collected_answers")  # Ensure SQLAlchemy detects JSONB change
     
     # Get next step based on conditions
     next_step = _get_next_step(flow.steps, answers)

@@ -236,6 +236,13 @@ function MessageItem({ message, onFeedback, onEdit, onInteractionAnswer, onInter
   const [shareError, setShareError] = useState<string | null>(null)
   const [isInteractionLoading, setIsInteractionLoading] = useState(false)
   
+  // Reset loading when interaction question changes (new question means previous answer was processed)
+  React.useEffect(() => {
+    if (message.interaction?.question?.id) {
+      setIsInteractionLoading(false)
+    }
+  }, [message.interaction?.question?.id])
+  
   // Helper function to copy text to clipboard (works on HTTP and HTTPS)
   const copyToClipboard = async (text: string): Promise<boolean> => {
     // Try modern clipboard API first (requires HTTPS)

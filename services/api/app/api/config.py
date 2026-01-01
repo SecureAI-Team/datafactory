@@ -1310,6 +1310,9 @@ async def answer_interaction(
     db: Session = Depends(get_db)
 ):
     """提交交互答案，获取下一步"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     session = db.query(InteractionSession).filter(
         InteractionSession.session_id == session_id,
         InteractionSession.status == 'active'
@@ -1332,6 +1335,9 @@ async def answer_interaction(
             detail="Interaction flow not found"
         )
     
+    logger.info(f"[InteractionAnswer] session_id={session_id}, step_id={body.step_id}, answer={body.answer}")
+    logger.info(f"[InteractionAnswer] Before update - collected_answers={session.collected_answers}")
+    
     # Update collected answers - use dict copy and flag_modified for JSONB
     answers = dict(session.collected_answers or {})
     answers[body.step_id] = body.answer
@@ -1339,8 +1345,12 @@ async def answer_interaction(
     session.current_step += 1
     flag_modified(session, "collected_answers")  # Ensure SQLAlchemy detects JSONB change
     
+    logger.info(f"[InteractionAnswer] After update - answers={answers}")
+    logger.info(f"[InteractionAnswer] Flow steps: {[s.get('id') for s in (flow.steps or [])]}")
+    
     # Get next step based on conditions
     next_step = _get_next_step(flow.steps, answers)
+    logger.info(f"[InteractionAnswer] next_step={next_step.get('id') if next_step else None}")
     
     if next_step is None:
         # All questions answered - complete the session

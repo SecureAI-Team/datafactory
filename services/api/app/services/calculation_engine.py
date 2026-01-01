@@ -519,10 +519,45 @@ class CalculationEngine:
         }
     
     def _calc_generic(self, formula: str, values: Dict) -> Dict:
-        """通用公式计算"""
+        """通用公式计算 - 支持单行表达式和多行语句"""
         try:
-            result = eval(formula, {"__builtins__": {}}, values)
-            return {"value": result}
+            import math as math_module
+            
+            # Create namespace with input values and math functions
+            namespace = values.copy()
+            namespace.update({
+                'min': min,
+                'max': max,
+                'abs': abs,
+                'round': round,
+                'sum': sum,
+                'pow': pow,
+                'sqrt': math_module.sqrt,
+                'floor': math_module.floor,
+                'ceil': math_module.ceil,
+                'math': math_module,
+            })
+            
+            formula = formula.strip()
+            
+            # If formula contains assignment or multiple statements, use exec()
+            if '\n' in formula or ('=' in formula and not formula.startswith('=')):
+                # Multi-statement formula - use exec()
+                safe_builtins = {
+                    "round": round, "abs": abs, "min": min, "max": max, 
+                    "sum": sum, "pow": pow, "int": int, "float": float,
+                    "len": len, "range": range,
+                }
+                exec(formula, {"__builtins__": safe_builtins, "math": math_module}, namespace)
+                # Get the result (should be stored in 'result' variable)
+                result = namespace.get('result')
+                if result is None:
+                    return {"value": None, "reasoning": "公式未定义 'result' 变量"}
+                return {"value": result}
+            else:
+                # Single expression - use eval()
+                result = eval(formula, {"__builtins__": {}}, namespace)
+                return {"value": result}
         except Exception as e:
             return {"value": None, "reasoning": f"公式计算失败: {e}"}
     

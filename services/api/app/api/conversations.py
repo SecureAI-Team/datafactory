@@ -312,6 +312,9 @@ async def send_message(
     
     # ==================== 交互流程智能触发检测 ====================
     interaction_trigger_info = None
+    optimized_query = body.content  # 默认使用原始查询
+    user_context = {}  # 用户意图上下文
+    
     try:
         client = get_llm_client()
         trigger_result = detect_interaction_trigger(
@@ -321,7 +324,16 @@ async def send_message(
             use_llm=True
         )
         
-        if trigger_result.should_trigger and trigger_result.flow_id:
+        # 保存用户上下文（无论是否触发流程）
+        user_context = trigger_result.user_context or {}
+        
+        if trigger_result.skip_flow and trigger_result.direct_query:
+            # LLM 判断用户已提供足够信息，直接使用优化后的查询搜索
+            logger.info(f"Skip flow, direct search with: {trigger_result.direct_query}")
+            optimized_query = trigger_result.direct_query
+            # 继续执行 RAG 流程，但使用优化后的查询
+            
+        elif trigger_result.should_trigger and trigger_result.flow_id:
             # 获取流程详情
             flow = db.query(InteractionFlow).filter(
                 InteractionFlow.flow_id == trigger_result.flow_id,
@@ -360,12 +372,14 @@ async def send_message(
         # 继续正常 RAG 流程
     
     # ==================== 正常 RAG 回答流程 ====================
+    # 使用优化后的查询（可能是 LLM 提取的更精准的搜索词）
     try:
         rag_result = await _generate_rag_response(
-            query=body.content,
+            query=optimized_query,
             conversation_id=conversation_id,
             scenario_id=conv.scenario_id,
-            db=db
+            db=db,
+            user_context=user_context  # 传递上下文
         )
         assistant_content = rag_result["answer"]
         sources = rag_result["sources"]
@@ -408,14 +422,24 @@ async def _generate_rag_response(
     query: str,
     conversation_id: str,
     scenario_id: Optional[str] = None,
-    db: Session = None
+    db: Session = None,
+    user_context: dict = None
 ) -> dict:
     """
     Generate RAG response using retrieval and LLM
     
+    Args:
+        query: 用户查询（可能是 LLM 优化后的）
+        conversation_id: 对话 ID
+        scenario_id: 场景 ID
+        db: 数据库会话
+        user_context: 用户意图上下文（LLM 提取的主题、关键词等）
+    
     Returns:
         dict with keys: answer, sources, model, interaction_trigger (optional)
     """
+    user_context = user_context or {}
+    
     # 1. 意图识别
     client = get_llm_client()
     intent_recognizer = get_intent_recognizer(client)
@@ -427,9 +451,29 @@ async def _generate_rag_response(
         logger.warning(f"Intent recognition failed: {e}")
         intent_result = None
     
-    # 2. 检索知识
+    # 2. 增强检索查询 - 结合用户上下文
+    enhanced_query = query
+    if user_context:
+        topic = user_context.get("topic", "")
+        keywords = user_context.get("keywords", [])
+        product = user_context.get("product", "")
+        
+        # 如果有提取的主题/关键词，添加到查询中以提高检索精度
+        context_terms = [topic] if topic else []
+        context_terms.extend(keywords)
+        if product:
+            context_terms.append(product)
+        
+        if context_terms:
+            # 将上下文关键词加入查询，避免重复
+            unique_terms = [t for t in context_terms if t and t.lower() not in query.lower()]
+            if unique_terms:
+                enhanced_query = f"{query} {' '.join(unique_terms)}"
+                logger.info(f"Enhanced query with context: {enhanced_query}")
+    
+    # 3. 检索知识
     try:
-        hits = search(query, top_k=5, intent_result=intent_result)
+        hits = search(enhanced_query, top_k=5, intent_result=intent_result)
         logger.info(f"Retrieved {len(hits)} hits")
     except Exception as e:
         logger.error(f"Retrieval error: {e}")

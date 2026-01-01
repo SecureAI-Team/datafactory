@@ -23,10 +23,15 @@ class FlowTriggerResult:
     confidence: float = 0.0
     reason: str = ""
     matched_keywords: List[str] = None
+    user_context: Dict[str, Any] = None  # 用户意图上下文（LLM提取）
+    skip_flow: bool = False  # 是否跳过流程直接执行（用户已提供足够信息）
+    direct_query: str = None  # 直接执行时使用的查询
     
     def __post_init__(self):
         if self.matched_keywords is None:
             self.matched_keywords = []
+        if self.user_context is None:
+            self.user_context = {}
 
 
 class InteractionFlowTriggerService:
@@ -138,7 +143,7 @@ class InteractionFlowTriggerService:
         flows: List[InteractionFlow],
         history: List[Dict] = None
     ) -> FlowTriggerResult:
-        """基于 LLM 的智能触发检测"""
+        """基于 LLM 的智能触发检测 - 包含上下文提取和跳过判断"""
         if not self.llm_client:
             return FlowTriggerResult(should_trigger=False, reason="no_llm_client")
         
@@ -163,7 +168,7 @@ class InteractionFlowTriggerService:
                 history_lines.append(f"{role}: {content}")
             history_text = "\n".join(history_lines)
         
-        prompt = f"""分析用户意图，判断是否需要启动结构化交互流程来收集信息。
+        prompt = f"""分析用户意图，提取关键信息，判断如何最好地回应。
 
 用户问题: {query}
 
@@ -173,58 +178,97 @@ class InteractionFlowTriggerService:
 可用的交互流程:
 {flows_text}
 
-判断标准:
-1. 如果用户询问的内容需要多个参数才能回答（如报价、选型、案例查找），应该触发对应流程
-2. 如果用户明确表达需要帮助完成某个任务（如"帮我算一下"、"我想找案例"），应该触发
-3. 如果用户的问题可以直接回答，不需要收集额外信息，不应该触发
-4. 如果用户正在提供信息或补充说明，不应该触发
+请分析:
+1. 用户真正想要什么？提取关键主题/产品/领域
+2. 用户是否已经提供了足够的信息可以直接回答？
+3. 是否需要启动交互流程来收集更多信息？
 
-请以 JSON 格式返回分析结果:
+判断规则:
+- 如果用户问"有没有XX案例"、"XX相关的案例"等，已经明确了主题，应该直接搜索，不需要再问行业/规模
+- 如果用户说"我想找案例"但没有说什么类型的案例，才需要启动交互流程收集信息
+- 如果用户问的是具体的技术/产品问题，直接回答，不需要交互流程
+
+请以 JSON 格式返回:
 {{
-    "should_trigger": true或false,
-    "flow_id": "如果触发则填写流程ID，否则为null",
-    "confidence": 0.0-1.0的置信度,
-    "reason": "判断理由（简短）"
+    "user_intent": "用户意图的简短描述",
+    "extracted_context": {{
+        "topic": "提取的主题/领域，如'工控安全'、'汽车电子'、'PCB检测'等",
+        "product": "提到的产品型号，如'AOI8000'，没有则为null",
+        "keywords": ["提取的关键词列表"]
+    }},
+    "action": "direct_search/direct_answer/start_flow/no_action",
+    "flow_id": "如果action是start_flow，填写流程ID，否则为null",
+    "direct_query": "如果action是direct_search，填写用于搜索的优化查询语句",
+    "confidence": 0.0-1.0,
+    "reason": "判断理由"
 }}
 
 只返回 JSON，不要其他内容。"""
 
         try:
             response = self.llm_client.chat.completions.create(
-                model="qwen-turbo",  # 使用快速模型
+                model="qwen-turbo",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
-                max_tokens=256,
+                max_tokens=512,
             )
             
             content = response.choices[0].message.content.strip()
+            logger.info(f"[LLM Trigger Detection] Response: {content[:200]}...")
             
             # 提取 JSON
             json_match = re.search(r"\{[\s\S]*\}", content)
             if json_match:
                 result = json.loads(json_match.group())
                 
-                should_trigger = result.get("should_trigger", False)
+                action = result.get("action", "no_action")
                 flow_id = result.get("flow_id")
                 confidence = float(result.get("confidence", 0.5))
                 reason = result.get("reason", "")
+                user_context = result.get("extracted_context", {})
+                direct_query = result.get("direct_query")
                 
-                # 验证 flow_id 是否有效
-                if should_trigger and flow_id:
-                    valid_ids = [f.flow_id for f in flows]
-                    if flow_id not in valid_ids:
-                        logger.warning(f"LLM suggested invalid flow_id: {flow_id}")
-                        return FlowTriggerResult(
-                            should_trigger=False,
-                            reason="invalid_flow_id_from_llm"
-                        )
-                
-                return FlowTriggerResult(
-                    should_trigger=should_trigger,
-                    flow_id=flow_id if should_trigger else None,
-                    confidence=confidence,
-                    reason=f"llm:{reason}"
-                )
+                # 处理不同的 action
+                if action == "direct_search":
+                    # 用户已经提供足够信息，直接搜索
+                    logger.info(f"[LLM] Direct search recommended: {direct_query}")
+                    return FlowTriggerResult(
+                        should_trigger=False,
+                        skip_flow=True,
+                        direct_query=direct_query or query,
+                        user_context=user_context,
+                        confidence=confidence,
+                        reason=f"llm:direct_search - {reason}"
+                    )
+                    
+                elif action == "start_flow":
+                    # 需要启动交互流程
+                    if flow_id:
+                        valid_ids = [f.flow_id for f in flows]
+                        if flow_id not in valid_ids:
+                            logger.warning(f"LLM suggested invalid flow_id: {flow_id}")
+                            return FlowTriggerResult(
+                                should_trigger=False,
+                                reason="invalid_flow_id_from_llm"
+                            )
+                    
+                    logger.info(f"[LLM] Start flow recommended: {flow_id}")
+                    return FlowTriggerResult(
+                        should_trigger=True,
+                        flow_id=flow_id,
+                        confidence=confidence,
+                        user_context=user_context,
+                        reason=f"llm:start_flow - {reason}"
+                    )
+                    
+                else:
+                    # direct_answer 或 no_action - 不触发流程
+                    return FlowTriggerResult(
+                        should_trigger=False,
+                        user_context=user_context,
+                        confidence=confidence,
+                        reason=f"llm:{action} - {reason}"
+                    )
                 
         except Exception as e:
             logger.warning(f"LLM flow trigger detection failed: {e}")

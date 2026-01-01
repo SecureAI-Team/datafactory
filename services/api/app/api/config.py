@@ -1009,7 +1009,6 @@ async def test_calc_rule(
         )
     
     try:
-        # Simple formula evaluation (in production, use a safer eval method)
         # Create a namespace with the input values
         namespace = body.inputs.copy()
         
@@ -1025,10 +1024,21 @@ async def test_calc_rule(
             'sqrt': math.sqrt,
             'floor': math.floor,
             'ceil': math.ceil,
+            'math': math,  # Full math module
         })
         
-        # Evaluate the formula
-        result = eval(rule.formula, {"__builtins__": {}}, namespace)
+        # Check if formula is a single expression or multi-statement code
+        formula = rule.formula.strip()
+        
+        # If formula contains assignment or multiple statements, use exec()
+        if '\n' in formula or '=' in formula:
+            # Multi-statement formula - use exec()
+            exec(formula, {"__builtins__": {"round": round, "abs": abs, "min": min, "max": max, "sum": sum, "pow": pow, "int": int, "float": float}}, namespace)
+            # Get the result (should be stored in 'result' variable)
+            result = namespace.get('result', 'No result variable defined')
+        else:
+            # Single expression - use eval()
+            result = eval(formula, {"__builtins__": {}}, namespace)
         
         return {"success": True, "result": result, "formula": rule.formula, "inputs": body.inputs}
     except Exception as e:

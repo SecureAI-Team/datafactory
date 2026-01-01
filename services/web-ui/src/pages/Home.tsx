@@ -615,8 +615,8 @@ export default function Home() {
     },
   })
   
-  // Fetch available interaction flows (for future use in trigger detection)
-  const { data: _flowsData } = useQuery({
+  // Fetch available interaction flows for trigger detection
+  const { data: flowsData } = useQuery({
     queryKey: ['interaction-flows'],
     queryFn: () => interactionApi.getFlows({ is_active: true }),
     staleTime: 300000, // 5 minutes
@@ -634,7 +634,7 @@ export default function Home() {
   } | null>(null)
   
   // Start interaction flow (can be triggered by user action or automatic detection)
-  const _startInteractionFlow = async (flowId: string) => {
+  const startInteractionFlow = async (flowId: string) => {
     if (!conversationId) return
     
     try {
@@ -922,6 +922,17 @@ export default function Home() {
     
     const content = input.trim()
     const fileToUpload = attachedFile
+    
+    // Check if this message should trigger an interaction flow
+    if (flowsData?.flows && conversationId) {
+      const matchingFlow = interactionApi.checkTrigger(content, flowsData.flows)
+      if (matchingFlow) {
+        // Start the interaction flow instead of normal message
+        await startInteractionFlow(matchingFlow.flow_id)
+        setInput('')
+        return
+      }
+    }
     
     // Clear input and attachment
     setInput('')

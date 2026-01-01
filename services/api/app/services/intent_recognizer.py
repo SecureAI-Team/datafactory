@@ -1,6 +1,6 @@
 """
 增强的意图识别器
-规则引擎 + LLM 混合识别
+统一路由核心 - 规则引擎 + LLM 混合识别 + 上下文充分性判断
 """
 import re
 import json
@@ -25,9 +25,17 @@ class IntentType(str, Enum):
     PARAMETER_QUERY = "parameter_query"                  # 参数查询
     CALCULATION = "calculation"                          # 计算/选型
     CASE_STUDY = "case_study"                            # 案例查询
-    QUOTE = "quote"                                      # 报价咨询（Phase 6 新增）
-    INTERACTION_FLOW = "interaction_flow"                # 需要交互流程（多步骤收集信息）
+    QUOTE = "quote"                                      # 报价咨询
     GENERAL = "general"                                  # 通用
+
+
+class ActionType(str, Enum):
+    """路由动作类型"""
+    DIRECT_RAG = "direct_rag"           # 直接使用RAG回答
+    NEED_INFO = "need_info"             # 需要收集更多信息
+    CALCULATE = "calculate"              # 执行计算
+    COMPARE = "compare"                  # 执行对比
+    CONTRIBUTE = "contribute"            # 引导贡献
 
 
 class SceneClassification(str, Enum):
@@ -38,8 +46,19 @@ class SceneClassification(str, Enum):
 
 
 @dataclass
+class ContextSufficiency:
+    """上下文充分性判断结果"""
+    is_sufficient: bool                      # 是否有足够信息直接回答
+    missing_fields: List[str] = field(default_factory=list)  # 缺失的关键信息
+    extracted_context: Dict[str, Any] = field(default_factory=dict)  # 提取的上下文
+    optimized_query: str = ""                # 优化后的检索查询
+    suggested_action: ActionType = ActionType.DIRECT_RAG
+    confidence: float = 0.0
+
+
+@dataclass
 class IntentResult:
-    """意图识别结果"""
+    """意图识别结果 - 增强版"""
     intent_type: IntentType
     confidence: float
     scene_classification: SceneClassification = SceneClassification.GENERAL
@@ -49,6 +68,9 @@ class IntentResult:
     needs_clarification: bool = False
     clarification_reason: str = ""
     raw_llm_analysis: Optional[Dict] = None
+    # 新增：上下文充分性和路由建议
+    context_sufficiency: Optional[ContextSufficiency] = None
+    recommended_action: ActionType = ActionType.DIRECT_RAG
 
 
 # ==================== 意图识别规则库 ====================
@@ -205,7 +227,7 @@ SCENARIO_KEYWORDS = {
 
 
 class IntentRecognizer:
-    """增强的意图识别器"""
+    """增强的意图识别器 - 统一路由核心"""
     
     def __init__(self, llm_client: Optional[OpenAI] = None, enable_llm: bool = True):
         self.llm_client = llm_client
@@ -218,7 +240,7 @@ class IntentRecognizer:
         context: Dict = None,
     ) -> IntentResult:
         """
-        识别用户意图
+        识别用户意图（完整版 - 包含上下文充分性判断和路由建议）
         
         Args:
             query: 用户输入
@@ -226,7 +248,7 @@ class IntentRecognizer:
             context: 上下文信息（如当前场景、用户画像等）
         
         Returns:
-            IntentResult: 意图识别结果
+            IntentResult: 意图识别结果（包含路由建议）
         """
         history = history or []
         context = context or {}
@@ -267,13 +289,181 @@ class IntentRecognizer:
         result.needs_clarification = needs_clarification
         result.clarification_reason = reason
         
+        # Step 7: 分析上下文充分性并生成路由建议（核心新增）
+        if self.enable_llm:
+            context_sufficiency = self._analyze_context_sufficiency(
+                query, result, entities, history
+            )
+            result.context_sufficiency = context_sufficiency
+            result.recommended_action = context_sufficiency.suggested_action
+        else:
+            # 无 LLM 时使用规则判断路由
+            result.recommended_action = self._rule_based_routing(result, entities)
+        
         logger.info(
             f"Intent recognized: {result.intent_type.value} "
             f"(conf={result.confidence:.2f}, scenes={scenario_ids}, "
-            f"clarify={needs_clarification})"
+            f"action={result.recommended_action.value})"
         )
         
         return result
+    
+    def _analyze_context_sufficiency(
+        self,
+        query: str,
+        intent_result: IntentResult,
+        entities: Dict,
+        history: List[Dict]
+    ) -> ContextSufficiency:
+        """
+        使用 LLM 分析上下文充分性，决定是否需要收集更多信息
+        
+        核心逻辑：
+        - 如果用户问题已经足够具体（如"工控安全案例"），直接搜索
+        - 如果用户问题模糊（如"找个案例"），需要收集更多信息
+        """
+        if not self.llm_client:
+            return ContextSufficiency(
+                is_sufficient=True,
+                optimized_query=query,
+                suggested_action=ActionType.DIRECT_RAG
+            )
+        
+        # 构建历史上下文
+        history_text = "无"
+        if history:
+            history_lines = [
+                f"{'用户' if m.get('role') == 'user' else '助手'}: {m.get('content', '')[:100]}"
+                for m in history[-3:]
+            ]
+            history_text = "\n".join(history_lines)
+        
+        # 实体信息
+        entities_text = json.dumps(entities, ensure_ascii=False) if entities else "无"
+        
+        prompt = f"""分析用户问题，判断是否有足够的信息可以直接回答或检索。
+
+用户问题: {query}
+识别的意图: {intent_result.intent_type.value}
+提取的实体: {entities_text}
+对话历史: {history_text}
+
+请分析:
+1. 用户问的是否足够具体，可以直接进行知识库检索？
+2. 是否缺少关键信息，需要先收集更多信息？
+3. 提取用于检索的优化查询词
+
+判断规则:
+- "有没有工控安全的案例" → 足够具体，直接搜索"工控安全 案例"
+- "找个案例" → 不够具体，需要问用户想找什么领域的案例
+- "AOI8000的价格" → 足够具体，直接搜索
+- "帮我算个报价" → 不够具体，需要收集产品型号、数量等信息
+- "对比AOI8000和AOI5000" → 足够具体，直接对比
+
+请以 JSON 格式返回:
+{{
+    "is_sufficient": true/false,
+    "extracted_context": {{
+        "topic": "提取的主题/领域",
+        "product": "提取的产品（没有则为null）",
+        "industry": "提取的行业（没有则为null）",
+        "keywords": ["关键词列表"]
+    }},
+    "optimized_query": "用于检索的优化查询语句",
+    "missing_fields": ["缺失的关键信息列表"],
+    "suggested_action": "direct_rag/need_info/calculate/compare",
+    "confidence": 0.0-1.0,
+    "reason": "判断理由"
+}}
+
+只返回 JSON，不要其他内容。"""
+        
+        try:
+            response = self.llm_client.chat.completions.create(
+                model="qwen-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=512,
+            )
+            
+            content = response.choices[0].message.content.strip()
+            logger.debug(f"Context sufficiency analysis: {content[:200]}...")
+            
+            json_match = re.search(r"\{[\s\S]*\}", content)
+            if json_match:
+                result = json.loads(json_match.group())
+                
+                action_map = {
+                    "direct_rag": ActionType.DIRECT_RAG,
+                    "need_info": ActionType.NEED_INFO,
+                    "calculate": ActionType.CALCULATE,
+                    "compare": ActionType.COMPARE,
+                    "contribute": ActionType.CONTRIBUTE,
+                }
+                
+                suggested_action = action_map.get(
+                    result.get("suggested_action", "direct_rag"),
+                    ActionType.DIRECT_RAG
+                )
+                
+                return ContextSufficiency(
+                    is_sufficient=result.get("is_sufficient", True),
+                    missing_fields=result.get("missing_fields", []),
+                    extracted_context=result.get("extracted_context", {}),
+                    optimized_query=result.get("optimized_query", query),
+                    suggested_action=suggested_action,
+                    confidence=float(result.get("confidence", 0.5))
+                )
+                
+        except Exception as e:
+            logger.warning(f"Context sufficiency analysis failed: {e}")
+        
+        # 回退：默认允许直接搜索
+        return ContextSufficiency(
+            is_sufficient=True,
+            optimized_query=query,
+            suggested_action=ActionType.DIRECT_RAG
+        )
+    
+    def _rule_based_routing(
+        self,
+        intent_result: IntentResult,
+        entities: Dict
+    ) -> ActionType:
+        """基于规则的路由决策（无 LLM 时使用）"""
+        intent = intent_result.intent_type
+        
+        # 对比类意图
+        if intent == IntentType.COMPARISON:
+            return ActionType.COMPARE
+        
+        # 计算类意图
+        if intent == IntentType.CALCULATION:
+            # 检查是否有足够的参数
+            required = ["capacity", "power", "device_count"]
+            if any(p in entities for p in required):
+                return ActionType.CALCULATE
+            else:
+                return ActionType.NEED_INFO
+        
+        # 报价类意图
+        if intent == IntentType.QUOTE:
+            # 检查是否有产品信息
+            if "product" in entities or intent_result.scenario_ids:
+                return ActionType.DIRECT_RAG
+            else:
+                return ActionType.NEED_INFO
+        
+        # 案例查询
+        if intent == IntentType.CASE_STUDY:
+            # 检查是否有主题/行业信息
+            if intent_result.scenario_ids or len(intent_result.matched_keywords) > 0:
+                return ActionType.DIRECT_RAG
+            else:
+                return ActionType.NEED_INFO
+        
+        # 其他类型默认直接 RAG
+        return ActionType.DIRECT_RAG
     
     def _rule_based_recognition(self, query: str) -> IntentResult:
         """基于规则的意图识别"""
@@ -519,7 +709,6 @@ class IntentRecognizer:
             IntentType.CALCULATION: "需要计算或选型",
             IntentType.CASE_STUDY: "寻找案例或实例",
             IntentType.QUOTE: "咨询价格或报价",
-            IntentType.INTERACTION_FLOW: "需要多步骤交互收集信息",
             IntentType.GENERAL: "一般性问题",
         }
         return descriptions.get(intent_type, "")

@@ -259,11 +259,19 @@ class InteractionSession(Base):
     id = Column(Integer, primary_key=True)
     session_id = Column(String(50), unique=True, nullable=False)
     conversation_id = Column(String(50), nullable=False)  # 关联对话
-    flow_id = Column(String(50), nullable=False)  # 关联流程
+    flow_id = Column(String(50), nullable=True)  # 关联流程（动态模式可为空）
     user_id = Column(Integer, ForeignKey('users.id'))
     current_step = Column(Integer, default=0)
     collected_answers = Column(JSONB, default={})  # 已收集的答案
     status = Column(String(20), default='active')  # active/completed/cancelled
+    
+    # 新增：动态模式支持
+    is_dynamic = Column(Boolean, default=False)  # 是否使用动态问题生成
+    intent_context = Column(JSONB, default={})  # 意图识别上下文
+    original_query = Column(Text)  # 用户原始问题
+    questions_asked = Column(JSONB, default=[])  # 动态生成的问题历史
+    optimized_query = Column(Text)  # LLM 优化后的查询
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
@@ -279,6 +287,11 @@ class InteractionSession(Base):
             "current_step": self.current_step,
             "collected_answers": self.collected_answers or {},
             "status": self.status,
+            "is_dynamic": self.is_dynamic,
+            "intent_context": self.intent_context or {},
+            "original_query": self.original_query,
+            "questions_asked": self.questions_asked or [],
+            "optimized_query": self.optimized_query,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

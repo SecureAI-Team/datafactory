@@ -25,7 +25,7 @@ import { useNavigate as useRouterNavigate } from 'react-router-dom'
 import { conversationsApi } from '../api/conversations'
 import { contributeApi } from '../api/contribute'
 import { interactionApi, InteractionStep } from '../api/interaction'
-import { useConversationStore, Message } from '../store/conversationStore'
+import { useConversationStore, Message, InteractionData } from '../store/conversationStore'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import InteractiveCard from '../components/chat/InteractiveCard'
 import clsx from 'clsx'
@@ -602,11 +602,43 @@ export default function Home() {
     mutationFn: ({ convId, content }: { convId: string; content: string }) =>
       conversationsApi.sendMessage(convId, { content }),
     onSuccess: (message) => {
-      addMessage(message)
+      // 处理新版动态交互格式（API返回snake_case，需要转换为camelCase）
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rawInteraction = message.interaction as any
+      if (rawInteraction && rawInteraction.question) {
+        // 转换为前端期望的 InteractionData 格式
+        const interactionData: InteractionData = {
+          sessionId: rawInteraction.session_id || rawInteraction.sessionId,
+          flowId: 'dynamic',  // 动态模式不绑定静态流程
+          flowName: '智能问答',
+          currentStep: rawInteraction.progress?.answered ?? 0,
+          totalSteps: rawInteraction.progress?.total ?? 1,
+          question: {
+            id: rawInteraction.question.field_id || rawInteraction.question.id,
+            question: rawInteraction.question.question,
+            type: (rawInteraction.question.question_type || rawInteraction.question.type || 'single') as 'single' | 'multiple' | 'input',
+            options: rawInteraction.question.options?.map((opt: { id: string; label: string }) => ({
+              id: opt.id,
+              label: opt.label
+            })),
+            placeholder: rawInteraction.question.placeholder,
+          },
+          collectedAnswers: {},
+        }
+        
+        // 添加带交互数据的消息
+        addMessage({
+          ...message,
+          interaction: interactionData,
+        })
+      } else {
+        addMessage(message)
+      }
+      
       setSending(false)
       queryClient.invalidateQueries({ queryKey: ['conversations'] })
       
-      // 检查是否有 LLM 智能触发的交互流程
+      // 检查是否有 LLM 智能触发的交互流程（兼容旧版）
       if (message.interaction_trigger && conversationId) {
         const trigger = message.interaction_trigger
         console.log(`LLM triggered interaction flow: ${trigger.flow_id} (conf=${trigger.confidence})`)
@@ -701,8 +733,32 @@ export default function Home() {
     }
   }
   
-  // Handle interaction answer
+  // Handle interaction answer - supports both static flows and dynamic mode
   const handleInteractionAnswer = async (sessionId: string, stepId: string, answer: string | string[]) => {
+    // Check if this is a dynamic session (sessionId starts with 'dyn_')
+    const isDynamic = sessionId.startsWith('dyn_')
+    
+    if (isDynamic && conversationId) {
+      // Dynamic mode - send answer as regular message
+      // The backend will handle it through the active session detection
+      const answerText = Array.isArray(answer) ? answer.join(', ') : answer
+      setSending(true)
+      
+      // Update the message to remove interaction UI temporarily
+      const messageId = messages.find(m => m.interaction?.sessionId === sessionId)?.message_id
+      if (messageId) {
+        updateMessage(messageId, { interaction: undefined })
+      }
+      
+      // Send the answer as a regular message
+      sendMutation.mutate({
+        convId: conversationId,
+        content: answerText,
+      })
+      return
+    }
+    
+    // Static flow mode - use the interaction API
     try {
       const result = await interactionApi.submitAnswer(sessionId, stepId, answer)
       

@@ -1001,16 +1001,11 @@ export default function Home() {
     const content = input.trim()
     const fileToUpload = attachedFile
     
-    // Check if this message should trigger an interaction flow
-    if (flowsData?.flows && conversationId) {
-      const matchingFlow = interactionApi.checkTrigger(content, flowsData.flows)
-      if (matchingFlow) {
-        // Start the interaction flow instead of normal message
-        await startInteractionFlow(matchingFlow.flow_id)
-        setInput('')
-        return
-      }
-    }
+    // NOTE: Static interaction flow trigger logic has been removed.
+    // The backend unified intent router now handles all routing decisions,
+    // including dynamic question generation based on context sufficiency.
+    // This ensures queries like "工控安全案例" are searched directly
+    // instead of triggering a generic "案例检索流程".
     
     // Clear input and attachment
     setInput('')

@@ -139,17 +139,20 @@ class DynamicInteractionService:
 对话历史:
 {history_text}
 
-任务说明:
-1. 判断是否已经有足够的信息来执行用户请求
-2. 如果信息不足，确定最关键的缺失信息是什么
-3. 生成一个与上下文相关的问题（不是通用问题）
+【核心原则】宁可直接执行（即使结果可能为空），也不要过度追问：
+- 只要用户提供了任何上下文信息（行业、产品、场景、领域），就应该设置 can_proceed=true
+- 即使知识库中可能没有相关内容，也应该先尝试搜索
+- 只有当用户完全没有提供任何上下文时，才需要提问
 
-生成问题的规则:
-- 问题要与用户原始问题相关联
-- 如果用户问"工控安全案例"，不要问"请选择行业"（因为已经说了工控）
-- 问题应该简洁明了
-- 提供的选项应该与用户上下文相关
-- 每次只问一个最关键的问题
+can_proceed=true 的情况（直接执行）:
+- "工控安全案例" → can_proceed=true，因为用户已经指定了"工控安全"
+- "汽车行业的AOI方案" → can_proceed=true，因为用户已经指定了行业和产品
+- "PCB检测怎么做" → can_proceed=true，因为用户已经指定了应用场景
+- "/案例 有工控安全的案例吗" → can_proceed=true，"工控安全"就是上下文
+
+can_proceed=false 的情况（需要提问）:
+- "找个案例" → 需要问：找什么领域的案例？
+- "帮我报价" → 需要问：什么产品？
 
 请以 JSON 格式返回:
 {{
@@ -158,7 +161,7 @@ class DynamicInteractionService:
     "missing_fields": [
         {{"field": "字段名", "importance": "required/optional", "description": "为什么需要"}}
     ],
-    "optimized_query": "如果可以继续，用于检索的优化查询",
+    "optimized_query": "如果可以继续，用于检索的优化查询（去掉命令前缀）",
     "next_question": {{
         "field_id": "字段ID",
         "question": "问题文本（与上下文相关）",
@@ -171,7 +174,7 @@ class DynamicInteractionService:
     }}
 }}
 
-如果 can_proceed=true，next_question 可以为 null。
+如果 can_proceed=true，next_question 应该为 null。
 只返回 JSON，不要其他内容。"""
 
         try:

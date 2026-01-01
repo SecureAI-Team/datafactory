@@ -8,7 +8,7 @@ from sqlalchemy import desc
 
 from ..db import get_db
 from ..models.user import User
-from ..models.config import ScenarioConfig, PromptTemplate, PromptHistory, KUTypeDefinition, ParameterDefinition, CalculationRule
+from ..models.config import ScenarioConfig, PromptTemplate, PromptHistory, KUTypeDefinition, ParameterDefinition, CalculationRule, InteractionFlow, InteractionSession
 from .auth import get_current_user, require_role
 
 router = APIRouter(prefix="/api/config", tags=["config"])
@@ -1043,4 +1043,458 @@ async def test_calc_rule(
         return {"success": True, "result": result, "formula": rule.formula, "inputs": body.inputs}
     except Exception as e:
         return {"success": False, "error": str(e), "formula": rule.formula, "inputs": body.inputs}
+
+
+# ==================== Interaction Flow Models ====================
+
+class InteractionStepOption(BaseModel):
+    id: str
+    label: str
+    icon: Optional[str] = None
+    description: Optional[str] = None
+    next: Optional[str] = None  # Next step ID for branching
+
+
+class InteractionStepDependency(BaseModel):
+    stepId: str
+    values: List[str]
+
+
+class InteractionStep(BaseModel):
+    id: str
+    question: str
+    type: str  # single/multiple/input
+    options: Optional[List[InteractionStepOption]] = None
+    inputType: Optional[str] = None  # text/number/date
+    placeholder: Optional[str] = None
+    validation: Optional[dict] = None
+    required: bool = True
+    dependsOn: Optional[InteractionStepDependency] = None
+
+
+class InteractionFlowCreateRequest(BaseModel):
+    flow_id: str
+    name: str
+    description: Optional[str] = None
+    trigger_patterns: Optional[List[str]] = []
+    scenario_id: Optional[str] = None
+    steps: List[InteractionStep]
+    on_complete: str = "generate"  # calculate/search/generate
+    is_active: bool = True
+
+
+class InteractionFlowUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    trigger_patterns: Optional[List[str]] = None
+    scenario_id: Optional[str] = None
+    steps: Optional[List[InteractionStep]] = None
+    on_complete: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+# ==================== Interaction Flow API ====================
+
+@router.get("/interaction-flows")
+async def get_interaction_flows(
+    scenario_id: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取交互流程列表"""
+    query = db.query(InteractionFlow)
+    
+    if scenario_id:
+        query = query.filter(InteractionFlow.scenario_id == scenario_id)
+    if is_active is not None:
+        query = query.filter(InteractionFlow.is_active == is_active)
+    
+    flows = query.order_by(InteractionFlow.id).all()
+    
+    return {
+        "flows": [flow.to_dict() for flow in flows],
+        "total": len(flows)
+    }
+
+
+@router.get("/interaction-flows/{flow_id}")
+async def get_interaction_flow(
+    flow_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取单个交互流程"""
+    flow = db.query(InteractionFlow).filter(InteractionFlow.flow_id == flow_id).first()
+    
+    if not flow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Interaction flow not found"
+        )
+    
+    return flow.to_dict()
+
+
+@router.post("/interaction-flows")
+async def create_interaction_flow(
+    body: InteractionFlowCreateRequest,
+    admin: User = Depends(require_role("admin", "data_ops")),
+    db: Session = Depends(get_db)
+):
+    """创建交互流程"""
+    # Check for duplicate flow_id
+    existing = db.query(InteractionFlow).filter(InteractionFlow.flow_id == body.flow_id).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Flow with ID '{body.flow_id}' already exists"
+        )
+    
+    flow = InteractionFlow(
+        flow_id=body.flow_id,
+        name=body.name,
+        description=body.description,
+        trigger_patterns=body.trigger_patterns,
+        scenario_id=body.scenario_id,
+        steps=[step.dict() for step in body.steps],
+        on_complete=body.on_complete,
+        is_active=body.is_active,
+        created_by=admin.id
+    )
+    
+    db.add(flow)
+    db.commit()
+    db.refresh(flow)
+    
+    return flow.to_dict()
+
+
+@router.put("/interaction-flows/{flow_id}")
+async def update_interaction_flow(
+    flow_id: str,
+    body: InteractionFlowUpdateRequest,
+    admin: User = Depends(require_role("admin", "data_ops")),
+    db: Session = Depends(get_db)
+):
+    """更新交互流程"""
+    flow = db.query(InteractionFlow).filter(InteractionFlow.flow_id == flow_id).first()
+    
+    if not flow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Interaction flow not found"
+        )
+    
+    if body.name is not None:
+        flow.name = body.name
+    if body.description is not None:
+        flow.description = body.description
+    if body.trigger_patterns is not None:
+        flow.trigger_patterns = body.trigger_patterns
+    if body.scenario_id is not None:
+        flow.scenario_id = body.scenario_id
+    if body.steps is not None:
+        flow.steps = [step.dict() for step in body.steps]
+    if body.on_complete is not None:
+        flow.on_complete = body.on_complete
+    if body.is_active is not None:
+        flow.is_active = body.is_active
+    
+    db.commit()
+    db.refresh(flow)
+    
+    return flow.to_dict()
+
+
+@router.delete("/interaction-flows/{flow_id}")
+async def delete_interaction_flow(
+    flow_id: str,
+    admin: User = Depends(require_role("admin")),
+    db: Session = Depends(get_db)
+):
+    """删除交互流程"""
+    flow = db.query(InteractionFlow).filter(InteractionFlow.flow_id == flow_id).first()
+    
+    if not flow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Interaction flow not found"
+        )
+    
+    db.delete(flow)
+    db.commit()
+    
+    return {"message": f"Flow '{flow_id}' deleted"}
+
+
+# ==================== Interaction Session API ====================
+
+class StartInteractionRequest(BaseModel):
+    flow_id: str
+
+
+class AnswerInteractionRequest(BaseModel):
+    step_id: str
+    answer: str | List[str]  # Single value or multiple values for multi-select
+
+
+@router.post("/interaction-sessions/start")
+async def start_interaction(
+    conversation_id: str,
+    body: StartInteractionRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """开始交互流程"""
+    import uuid
+    
+    # Get the flow
+    flow = db.query(InteractionFlow).filter(
+        InteractionFlow.flow_id == body.flow_id,
+        InteractionFlow.is_active == True
+    ).first()
+    
+    if not flow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Interaction flow not found or inactive"
+        )
+    
+    # Check for existing active session
+    existing = db.query(InteractionSession).filter(
+        InteractionSession.conversation_id == conversation_id,
+        InteractionSession.status == 'active'
+    ).first()
+    
+    if existing:
+        # Cancel the existing session
+        existing.status = 'cancelled'
+        db.commit()
+    
+    # Create new session
+    session = InteractionSession(
+        session_id=str(uuid.uuid4())[:8],
+        conversation_id=conversation_id,
+        flow_id=body.flow_id,
+        user_id=user.id,
+        current_step=0,
+        collected_answers={},
+        status='active'
+    )
+    
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    
+    # Get first applicable step
+    first_step = _get_next_step(flow.steps, {})
+    
+    return {
+        "session": session.to_dict(),
+        "flow": {
+            "flow_id": flow.flow_id,
+            "name": flow.name,
+            "total_steps": len([s for s in flow.steps if not s.get('dependsOn')])
+        },
+        "current_question": first_step
+    }
+
+
+@router.post("/interaction-sessions/{session_id}/answer")
+async def answer_interaction(
+    session_id: str,
+    body: AnswerInteractionRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """提交交互答案，获取下一步"""
+    session = db.query(InteractionSession).filter(
+        InteractionSession.session_id == session_id,
+        InteractionSession.status == 'active'
+    ).first()
+    
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Active interaction session not found"
+        )
+    
+    # Get the flow
+    flow = db.query(InteractionFlow).filter(
+        InteractionFlow.flow_id == session.flow_id
+    ).first()
+    
+    if not flow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Interaction flow not found"
+        )
+    
+    # Update collected answers
+    answers = session.collected_answers or {}
+    answers[body.step_id] = body.answer
+    session.collected_answers = answers
+    session.current_step += 1
+    
+    # Get next step based on conditions
+    next_step = _get_next_step(flow.steps, answers)
+    
+    if next_step is None:
+        # All questions answered - complete the session
+        session.status = 'completed'
+        db.commit()
+        
+        return {
+            "session": session.to_dict(),
+            "completed": True,
+            "collected_answers": answers,
+            "on_complete": flow.on_complete
+        }
+    
+    db.commit()
+    
+    # Count remaining steps
+    answered_count = len(answers)
+    total_applicable = _count_applicable_steps(flow.steps, answers)
+    
+    return {
+        "session": session.to_dict(),
+        "completed": False,
+        "current_question": next_step,
+        "progress": {
+            "answered": answered_count,
+            "total": total_applicable
+        }
+    }
+
+
+@router.post("/interaction-sessions/{session_id}/cancel")
+async def cancel_interaction(
+    session_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """取消交互流程"""
+    session = db.query(InteractionSession).filter(
+        InteractionSession.session_id == session_id
+    ).first()
+    
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Interaction session not found"
+        )
+    
+    session.status = 'cancelled'
+    db.commit()
+    
+    return {"message": "Session cancelled", "session": session.to_dict()}
+
+
+@router.get("/interaction-sessions/{conversation_id}/active")
+async def get_active_session(
+    conversation_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取对话的活跃交互会话"""
+    session = db.query(InteractionSession).filter(
+        InteractionSession.conversation_id == conversation_id,
+        InteractionSession.status == 'active'
+    ).first()
+    
+    if not session:
+        return {"session": None}
+    
+    # Get the flow
+    flow = db.query(InteractionFlow).filter(
+        InteractionFlow.flow_id == session.flow_id
+    ).first()
+    
+    if not flow:
+        return {"session": None}
+    
+    # Get current question
+    next_step = _get_next_step(flow.steps, session.collected_answers or {})
+    
+    return {
+        "session": session.to_dict(),
+        "flow": {
+            "flow_id": flow.flow_id,
+            "name": flow.name
+        },
+        "current_question": next_step
+    }
+
+
+# ==================== Helper Functions ====================
+
+def _get_next_step(steps: List[dict], answers: dict) -> Optional[dict]:
+    """Get the next applicable step based on current answers"""
+    for step in steps:
+        step_id = step.get('id')
+        
+        # Skip already answered steps
+        if step_id in answers:
+            continue
+        
+        # Check dependency condition
+        depends_on = step.get('dependsOn')
+        if depends_on:
+            dep_step_id = depends_on.get('stepId')
+            dep_values = depends_on.get('values', [])
+            
+            # Get the answer for the dependent step
+            dep_answer = answers.get(dep_step_id)
+            
+            if dep_answer is None:
+                # Dependency not answered yet, skip this step for now
+                continue
+            
+            # Check if the answer matches any of the required values
+            if isinstance(dep_answer, list):
+                # Multiple select - check if any value matches
+                if not any(v in dep_values for v in dep_answer):
+                    continue
+            else:
+                # Single select - check if value matches
+                if dep_answer not in dep_values:
+                    continue
+        
+        # This step is applicable
+        return step
+    
+    return None
+
+
+def _count_applicable_steps(steps: List[dict], answers: dict) -> int:
+    """Count the total number of steps that would be applicable given current answers"""
+    count = 0
+    simulated_answers = answers.copy()
+    
+    for step in steps:
+        step_id = step.get('id')
+        
+        # Check dependency condition
+        depends_on = step.get('dependsOn')
+        if depends_on:
+            dep_step_id = depends_on.get('stepId')
+            dep_values = depends_on.get('values', [])
+            
+            dep_answer = simulated_answers.get(dep_step_id)
+            
+            if dep_answer is None:
+                continue
+            
+            if isinstance(dep_answer, list):
+                if not any(v in dep_values for v in dep_answer):
+                    continue
+            else:
+                if dep_answer not in dep_values:
+                    continue
+        
+        count += 1
+    
+    return count
 

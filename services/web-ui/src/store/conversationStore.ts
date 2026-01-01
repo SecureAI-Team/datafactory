@@ -1,5 +1,37 @@
 import { create } from 'zustand'
 
+// Interactive question types
+export interface InteractionOption {
+  id: string
+  label: string
+  icon?: string
+  description?: string
+}
+
+export interface InteractionQuestion {
+  id: string
+  question: string
+  type: 'single' | 'multiple' | 'input'
+  options?: InteractionOption[]
+  inputType?: 'text' | 'number' | 'date'
+  placeholder?: string
+  validation?: {
+    min?: number
+    max?: number
+  }
+  required?: boolean
+}
+
+export interface InteractionData {
+  sessionId: string
+  flowId: string
+  flowName: string
+  currentStep: number
+  totalSteps: number
+  question: InteractionQuestion
+  collectedAnswers: Record<string, string | string[]>
+}
+
 export interface Message {
   id: number
   message_id: string
@@ -11,6 +43,8 @@ export interface Message {
   model_used: string | null
   latency_ms: number | null
   created_at: string
+  // Interactive message data
+  interaction?: InteractionData
 }
 
 export interface Conversation {

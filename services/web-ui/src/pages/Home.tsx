@@ -24,8 +24,10 @@ import {
 import { useNavigate as useRouterNavigate } from 'react-router-dom'
 import { conversationsApi } from '../api/conversations'
 import { contributeApi } from '../api/contribute'
-import { useConversationStore, Message } from '../store/conversationStore'
+import { interactionApi, InteractionFlow, InteractionStep } from '../api/interaction'
+import { useConversationStore, Message, InteractionData } from '../store/conversationStore'
 import MarkdownRenderer from '../components/MarkdownRenderer'
+import InteractiveCard from '../components/chat/InteractiveCard'
 import clsx from 'clsx'
 
 // Patterns that indicate missing information
@@ -64,6 +66,8 @@ interface MessageItemProps {
   message: Message
   onFeedback: (feedback: 'positive' | 'negative') => void
   onEdit?: (messageId: string, newContent: string) => void
+  onInteractionAnswer?: (sessionId: string, stepId: string, answer: string | string[]) => void
+  onInteractionCancel?: (sessionId: string) => void
   conversationId?: string
   userQuery?: string
   canEdit?: boolean
@@ -223,13 +227,14 @@ function ContributionPrompt({
   )
 }
 
-function MessageItem({ message, onFeedback, onEdit, conversationId, userQuery, canEdit }: MessageItemProps) {
+function MessageItem({ message, onFeedback, onEdit, onInteractionAnswer, onInteractionCancel, conversationId, userQuery, canEdit }: MessageItemProps) {
   const [copied, setCopied] = useState(false)
   const [shared, setShared] = useState(false)
   const [showContribution, setShowContribution] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
   const [editContent, setEditContent] = useState(message.content)
   const [shareError, setShareError] = useState<string | null>(null)
+  const [isInteractionLoading, setIsInteractionLoading] = useState(false)
   
   // Helper function to copy text to clipboard (works on HTTP and HTTPS)
   const copyToClipboard = async (text: string): Promise<boolean> => {
@@ -394,6 +399,26 @@ function MessageItem({ message, onFeedback, onEdit, conversationId, userQuery, c
           </div>
         ) : (
           <MarkdownRenderer content={message.content} />
+        )}
+        
+        {/* Interactive Question Card */}
+        {!isEditing && message.interaction && onInteractionAnswer && onInteractionCancel && (
+          <div className="mt-4">
+            <InteractiveCard
+              flowName={message.interaction.flowName}
+              question={message.interaction.question}
+              progress={{
+                answered: message.interaction.currentStep,
+                total: message.interaction.totalSteps
+              }}
+              onAnswer={(stepId, answer) => {
+                setIsInteractionLoading(true)
+                onInteractionAnswer(message.interaction!.sessionId, stepId, answer)
+              }}
+              onCancel={() => onInteractionCancel(message.interaction!.sessionId)}
+              isLoading={isInteractionLoading}
+            />
+          </div>
         )}
         
         {/* Sources */}
@@ -589,6 +614,158 @@ export default function Home() {
       updateMessage(variables.messageId, { feedback: variables.feedback })
     },
   })
+  
+  // Fetch available interaction flows
+  const { data: flowsData } = useQuery({
+    queryKey: ['interaction-flows'],
+    queryFn: () => interactionApi.getFlows({ is_active: true }),
+    staleTime: 300000, // 5 minutes
+  })
+  
+  // Active interaction session state
+  const [activeInteraction, setActiveInteraction] = useState<{
+    sessionId: string
+    flowId: string
+    flowName: string
+    currentStep: number
+    totalSteps: number
+    question: InteractionStep | null
+    collectedAnswers: Record<string, string | string[]>
+  } | null>(null)
+  
+  // Start interaction flow
+  const startInteractionFlow = async (flowId: string) => {
+    if (!conversationId) return
+    
+    try {
+      const result = await interactionApi.startSession(conversationId, flowId)
+      
+      if (result.current_question) {
+        setActiveInteraction({
+          sessionId: result.session.session_id,
+          flowId: result.flow.flow_id,
+          flowName: result.flow.name,
+          currentStep: 0,
+          totalSteps: result.flow.total_steps,
+          question: result.current_question,
+          collectedAnswers: {},
+        })
+        
+        // Add an assistant message with the interaction
+        const interactionMessage: Message = {
+          id: Date.now(),
+          message_id: `interaction-${result.session.session_id}`,
+          role: 'assistant',
+          content: `为了更好地帮助您，请回答以下问题：`,
+          sources: [],
+          feedback: null,
+          tokens_used: null,
+          model_used: null,
+          latency_ms: null,
+          created_at: new Date().toISOString(),
+          interaction: {
+            sessionId: result.session.session_id,
+            flowId: result.flow.flow_id,
+            flowName: result.flow.name,
+            currentStep: 0,
+            totalSteps: result.flow.total_steps,
+            question: result.current_question,
+            collectedAnswers: {},
+          },
+        }
+        addMessage(interactionMessage)
+      }
+    } catch (error) {
+      console.error('Failed to start interaction:', error)
+    }
+  }
+  
+  // Handle interaction answer
+  const handleInteractionAnswer = async (sessionId: string, stepId: string, answer: string | string[]) => {
+    try {
+      const result = await interactionApi.submitAnswer(sessionId, stepId, answer)
+      
+      if (result.completed) {
+        // Interaction completed - remove from active and update the message
+        setActiveInteraction(null)
+        
+        // Update the message to remove interaction UI
+        const messageId = `interaction-${sessionId}`
+        updateMessage(messageId, { interaction: undefined })
+        
+        // Construct a summary of answers and send as a follow-up message
+        const answersText = Object.entries(result.collected_answers || {})
+          .map(([key, val]) => `${key}: ${Array.isArray(val) ? val.join(', ') : val}`)
+          .join('\n')
+        
+        // Add user message with collected answers
+        const userMessage: Message = {
+          id: Date.now(),
+          message_id: `answers-${sessionId}`,
+          role: 'user',
+          content: `[已收集信息]\n${answersText}`,
+          sources: [],
+          feedback: null,
+          tokens_used: null,
+          model_used: null,
+          latency_ms: null,
+          created_at: new Date().toISOString(),
+        }
+        addMessage(userMessage)
+        
+        // Trigger follow-up based on on_complete action
+        if (conversationId && result.on_complete) {
+          setSending(true)
+          // Send the collected answers to get AI response
+          sendMutation.mutate({
+            convId: conversationId,
+            content: `基于以下信息进行${result.on_complete === 'calculate' ? '计算' : result.on_complete === 'search' ? '检索' : '生成回答'}:\n${answersText}`,
+          })
+        }
+      } else if (result.current_question) {
+        // Update to next question
+        const messageId = `interaction-${sessionId}`
+        updateMessage(messageId, {
+          interaction: {
+            sessionId,
+            flowId: activeInteraction?.flowId || '',
+            flowName: activeInteraction?.flowName || '',
+            currentStep: result.progress?.answered || 0,
+            totalSteps: result.progress?.total || 1,
+            question: result.current_question,
+            collectedAnswers: result.session.collected_answers,
+          },
+        })
+        
+        setActiveInteraction((prev) =>
+          prev
+            ? {
+                ...prev,
+                currentStep: result.progress?.answered || 0,
+                question: result.current_question!,
+                collectedAnswers: result.session.collected_answers,
+              }
+            : null
+        )
+      }
+    } catch (error) {
+      console.error('Failed to submit answer:', error)
+    }
+  }
+  
+  // Handle interaction cancel
+  const handleInteractionCancel = async (sessionId: string) => {
+    try {
+      await interactionApi.cancelSession(sessionId)
+      setActiveInteraction(null)
+      
+      // Remove the interaction message
+      const messageId = `interaction-${sessionId}`
+      updateMessage(messageId, { interaction: undefined, content: '交互已取消' })
+    } catch (error) {
+      console.error('Failed to cancel interaction:', error)
+    }
+  }
   
   // File attachment handler - attach file as message context
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -965,6 +1142,8 @@ export default function Home() {
                   userQuery={prevUserMessage?.content}
                   canEdit={canEdit}
                   onEdit={handleEditMessage}
+                  onInteractionAnswer={handleInteractionAnswer}
+                  onInteractionCancel={handleInteractionCancel}
                   onFeedback={(feedback) => {
                     if (conversationId) {
                       feedbackMutation.mutate({

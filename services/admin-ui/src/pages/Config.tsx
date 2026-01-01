@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Card, Tabs, Table, Button, Space, Tag, Modal, Form, Input, Select, message, Typography, Spin, List, Switch, InputNumber } from 'antd'
 import { PlusOutlined, EditOutlined, HistoryOutlined, PlayCircleOutlined, RollbackOutlined, DeleteOutlined, CodeOutlined } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { configApi, Scenario, PromptTemplate, KUType, ParameterDefinition, CalculationRule, CreateParameterRequest, CreateCalcRuleRequest } from '../api'
+import { configApi, Scenario, PromptTemplate, KUType, ParameterDefinition, CalculationRule, CreateParameterRequest, CreateCalcRuleRequest, InteractionFlow, InteractionStep, CreateInteractionFlowRequest } from '../api'
 
 const { Title, Text, Paragraph } = Typography
 const { TextArea } = Input
@@ -70,8 +70,16 @@ export default function Config() {
   const [calcTestInputs, setCalcTestInputs] = useState<Record<string, string>>({})
   const [calcTestResult, setCalcTestResult] = useState<string>('')
   
+  // Interaction Flow modals
+  const [flowModal, setFlowModal] = useState<{ visible: boolean; item: InteractionFlow | null; isNew: boolean }>({
+    visible: false,
+    item: null,
+    isNew: false,
+  })
+  
   const [paramForm] = Form.useForm()
   const [calcRuleForm] = Form.useForm()
+  const [flowForm] = Form.useForm()
   
   // Fetch data
   const { data: scenariosData, isLoading: loadingScenarios } = useQuery({
@@ -99,6 +107,12 @@ export default function Config() {
   const { data: calcRulesData, isLoading: loadingCalcRules } = useQuery({
     queryKey: ['config-calc-rules'],
     queryFn: () => configApi.getCalcRules(),
+  })
+  
+  // Fetch interaction flows
+  const { data: flowsData, isLoading: loadingFlows } = useQuery({
+    queryKey: ['config-interaction-flows'],
+    queryFn: () => configApi.getInteractionFlows(),
   })
   
   // Fetch prompt history when modal is open
@@ -247,13 +261,40 @@ export default function Config() {
       configApi.testCalcRule(ruleId, inputs),
     onSuccess: (data) => {
       setCalcTestResult(data.success ? JSON.stringify(data.result, null, 2) : `错误: ${data.error}`)
-      if (data.success) {
-        message.success('测试完成')
-      } else {
-        message.error(`测试失败: ${data.error}`)
-      }
     },
     onError: () => message.error('测试失败'),
+  })
+  
+  // Interaction flow mutations
+  const createFlowMutation = useMutation({
+    mutationFn: (data: CreateInteractionFlowRequest) => configApi.createInteractionFlow(data),
+    onSuccess: () => {
+      message.success('交互流程创建成功')
+      queryClient.invalidateQueries({ queryKey: ['config-interaction-flows'] })
+      setFlowModal({ visible: false, item: null, isNew: false })
+      flowForm.resetFields()
+    },
+    onError: () => message.error('创建失败'),
+  })
+  
+  const updateFlowMutation = useMutation({
+    mutationFn: ({ flowId, data }: { flowId: string; data: Partial<CreateInteractionFlowRequest> }) =>
+      configApi.updateInteractionFlow(flowId, data),
+    onSuccess: () => {
+      message.success('交互流程更新成功')
+      queryClient.invalidateQueries({ queryKey: ['config-interaction-flows'] })
+      setFlowModal({ visible: false, item: null, isNew: false })
+    },
+    onError: () => message.error('更新失败'),
+  })
+  
+  const deleteFlowMutation = useMutation({
+    mutationFn: (flowId: string) => configApi.deleteInteractionFlow(flowId),
+    onSuccess: () => {
+      message.success('交互流程已删除')
+      queryClient.invalidateQueries({ queryKey: ['config-interaction-flows'] })
+    },
+    onError: () => message.error('删除失败'),
   })
   
   // Form effects
@@ -381,6 +422,55 @@ export default function Config() {
     })
     setTestOutput(result)
     message.success('模板渲染完成')
+  }
+  
+  // Interaction Flow handlers
+  useEffect(() => {
+    if (flowModal.item && !flowModal.isNew) {
+      flowForm.setFieldsValue({
+        ...flowModal.item,
+        trigger_patterns: flowModal.item.trigger_patterns?.join(', ') || '',
+        steps: undefined, // Exclude complex object
+      })
+    } else if (flowModal.isNew) {
+      flowForm.resetFields()
+    }
+  }, [flowModal, flowForm])
+  
+  const handleSaveFlow = () => {
+    flowForm.validateFields().then((values: Record<string, unknown>) => {
+      const triggerPatterns = typeof values.trigger_patterns === 'string'
+        ? (values.trigger_patterns as string).split(',').map((s: string) => s.trim()).filter(Boolean)
+        : []
+      
+      const data: CreateInteractionFlowRequest = {
+        flow_id: values.flow_id as string,
+        name: values.name as string,
+        description: values.description as string | undefined,
+        trigger_patterns: triggerPatterns,
+        scenario_id: values.scenario_id as string | undefined,
+        steps: flowModal.item?.steps || [], // Keep existing steps for now
+        on_complete: values.on_complete as string | undefined,
+        is_active: values.is_active as boolean | undefined,
+      }
+      
+      if (flowModal.isNew) {
+        // For new flows, add a default step
+        data.steps = [{
+          id: 'step_1',
+          question: '请输入问题内容',
+          type: 'single',
+          options: [
+            { id: 'option_1', label: '选项1' },
+            { id: 'option_2', label: '选项2' },
+          ],
+          required: true,
+        }]
+        createFlowMutation.mutate(data)
+      } else if (flowModal.item) {
+        updateFlowMutation.mutate({ flowId: flowModal.item.flow_id, data })
+      }
+    })
   }
   
   const handleSaveParam = () => {
@@ -825,6 +915,113 @@ export default function Config() {
               columns={calcRuleColumns} 
               rowKey="id" 
               locale={{ emptyText: '暂无计算规则' }}
+            />
+          </Spin>
+        </div>
+      ),
+    },
+    {
+      key: 'interaction-flows',
+      label: '交互流程',
+      children: (
+        <div>
+          <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Button 
+              type="primary" 
+              icon={<PlusOutlined />}
+              onClick={() => setFlowModal({ visible: true, item: null, isNew: true })}
+            >
+              新建流程
+            </Button>
+            <Text type="secondary">定义结构化问答流程，用于收集用户信息</Text>
+          </div>
+          <Spin spinning={loadingFlows}>
+            <Table 
+              dataSource={flowsData?.flows ?? []} 
+              columns={[
+                {
+                  title: '流程 ID',
+                  dataIndex: 'flow_id',
+                  key: 'flow_id',
+                  render: (id: string) => <Text code>{id}</Text>,
+                },
+                {
+                  title: '名称',
+                  dataIndex: 'name',
+                  key: 'name',
+                },
+                {
+                  title: '触发关键词',
+                  dataIndex: 'trigger_patterns',
+                  key: 'trigger_patterns',
+                  render: (patterns: string[]) => (
+                    <Space wrap>
+                      {patterns?.slice(0, 3).map((p, i) => (
+                        <Tag key={i}>{p}</Tag>
+                      ))}
+                      {patterns?.length > 3 && <Tag>+{patterns.length - 3}</Tag>}
+                    </Space>
+                  ),
+                },
+                {
+                  title: '步骤数',
+                  dataIndex: 'steps',
+                  key: 'steps',
+                  render: (steps: InteractionStep[]) => steps?.length || 0,
+                },
+                {
+                  title: '完成动作',
+                  dataIndex: 'on_complete',
+                  key: 'on_complete',
+                  render: (action: string) => {
+                    const labels: Record<string, string> = {
+                      calculate: '计算',
+                      search: '检索',
+                      generate: '生成回答',
+                    }
+                    return <Tag color="blue">{labels[action] || action}</Tag>
+                  },
+                },
+                {
+                  title: '状态',
+                  dataIndex: 'is_active',
+                  key: 'is_active',
+                  render: (active: boolean) => (
+                    <Tag color={active ? 'green' : 'default'}>{active ? '启用' : '禁用'}</Tag>
+                  ),
+                },
+                {
+                  title: '操作',
+                  key: 'actions',
+                  render: (_: unknown, record: InteractionFlow) => (
+                    <Space>
+                      <Button 
+                        type="link" 
+                        icon={<EditOutlined />}
+                        onClick={() => setFlowModal({ visible: true, item: record, isNew: false })}
+                      >
+                        编辑
+                      </Button>
+                      <Button 
+                        type="link" 
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => {
+                          Modal.confirm({
+                            title: '确认删除',
+                            content: `确定要删除交互流程 "${record.name}" 吗？`,
+                            onOk: () => deleteFlowMutation.mutate(record.flow_id),
+                          })
+                        }}
+                      >
+                        删除
+                      </Button>
+                    </Space>
+                  ),
+                },
+              ]} 
+              rowKey="flow_id" 
+              locale={{ emptyText: '暂无交互流程' }}
             />
           </Spin>
         </div>
@@ -1292,6 +1489,106 @@ export default function Config() {
             )}
           </>
         )}
+      </Modal>
+      
+      {/* Interaction Flow Edit Modal */}
+      <Modal
+        title={flowModal.isNew ? '新建交互流程' : `编辑: ${flowModal.item?.name || ''}`}
+        open={flowModal.visible}
+        onCancel={() => setFlowModal({ visible: false, item: null, isNew: false })}
+        onOk={handleSaveFlow}
+        confirmLoading={createFlowMutation.isPending || updateFlowMutation.isPending}
+        width={700}
+      >
+        <Form form={flowForm} layout="vertical">
+          <Form.Item 
+            label="流程 ID" 
+            name="flow_id" 
+            rules={[{ required: true, message: '请输入流程 ID' }]}
+            extra="唯一标识符，例如: quote_calc, case_search"
+          >
+            <Input placeholder="quote_calc" disabled={!flowModal.isNew} />
+          </Form.Item>
+          
+          <Form.Item 
+            label="名称" 
+            name="name" 
+            rules={[{ required: true, message: '请输入流程名称' }]}
+          >
+            <Input placeholder="报价测算流程" />
+          </Form.Item>
+          
+          <Form.Item 
+            label="描述" 
+            name="description"
+          >
+            <TextArea rows={2} placeholder="用于收集报价所需的产品、数量等信息" />
+          </Form.Item>
+          
+          <Form.Item 
+            label="触发关键词" 
+            name="trigger_patterns"
+            extra="多个关键词用逗号分隔，当用户消息包含这些词时触发流程"
+          >
+            <Input placeholder="报价, 价格, 多少钱" />
+          </Form.Item>
+          
+          <Form.Item 
+            label="关联场景" 
+            name="scenario_id"
+          >
+            <Select allowClear placeholder="选择关联场景">
+              {scenariosData?.scenarios?.map(s => (
+                <Select.Option key={s.scenario_id} value={s.scenario_id}>{s.name}</Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+          
+          <Form.Item 
+            label="完成动作" 
+            name="on_complete"
+            initialValue="generate"
+          >
+            <Select>
+              <Select.Option value="generate">生成回答</Select.Option>
+              <Select.Option value="calculate">执行计算</Select.Option>
+              <Select.Option value="search">执行检索</Select.Option>
+            </Select>
+          </Form.Item>
+          
+          <Form.Item 
+            label="启用状态" 
+            name="is_active" 
+            valuePropName="checked"
+            initialValue={true}
+          >
+            <Switch checkedChildren="启用" unCheckedChildren="禁用" />
+          </Form.Item>
+          
+          {flowModal.item && flowModal.item.steps && (
+            <div style={{ marginTop: 16 }}>
+              <Text strong>问题步骤 ({flowModal.item.steps.length})</Text>
+              <List
+                size="small"
+                dataSource={flowModal.item.steps}
+                renderItem={(step: InteractionStep, index: number) => (
+                  <List.Item>
+                    <Space>
+                      <Tag color="blue">{index + 1}</Tag>
+                      <Text>{step.question}</Text>
+                      <Tag>{step.type === 'single' ? '单选' : step.type === 'multiple' ? '多选' : '输入'}</Tag>
+                      {step.options && <Text type="secondary">({step.options.length} 选项)</Text>}
+                    </Space>
+                  </List.Item>
+                )}
+                style={{ maxHeight: 200, overflowY: 'auto', background: '#1e293b', borderRadius: 4, padding: 8, marginTop: 8 }}
+              />
+              <Text type="secondary" style={{ fontSize: 12, marginTop: 8, display: 'block' }}>
+                注：问题步骤的详细编辑功能将在后续版本中提供
+              </Text>
+            </div>
+          )}
+        </Form>
       </Modal>
     </div>
   )

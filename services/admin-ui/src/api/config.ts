@@ -277,6 +277,77 @@ export const configApi = {
     const response = await apiClient.post(`/api/config/calc-rules/${ruleId}/test`, { inputs })
     return response.data
   },
+
+  // Interaction Flows
+  getInteractionFlows: async (params?: { scenario_id?: string; is_active?: boolean }): Promise<{ flows: InteractionFlow[]; total: number }> => {
+    const response = await apiClient.get('/api/config/interaction-flows', { params })
+    return response.data
+  },
+
+  getInteractionFlow: async (flowId: string): Promise<InteractionFlow> => {
+    const response = await apiClient.get(`/api/config/interaction-flows/${flowId}`)
+    return response.data
+  },
+
+  createInteractionFlow: async (data: CreateInteractionFlowRequest): Promise<InteractionFlow> => {
+    const response = await apiClient.post('/api/config/interaction-flows', data)
+    return response.data
+  },
+
+  updateInteractionFlow: async (flowId: string, data: Partial<CreateInteractionFlowRequest>): Promise<InteractionFlow> => {
+    const response = await apiClient.put(`/api/config/interaction-flows/${flowId}`, data)
+    return response.data
+  },
+
+  deleteInteractionFlow: async (flowId: string): Promise<void> => {
+    await apiClient.delete(`/api/config/interaction-flows/${flowId}`)
+  },
+}
+
+// Interaction Flow types
+export interface InteractionOption {
+  id: string
+  label: string
+  icon?: string
+  description?: string
+  next?: string
+}
+
+export interface InteractionStep {
+  id: string
+  question: string
+  type: 'single' | 'multiple' | 'input'
+  options?: InteractionOption[]
+  inputType?: 'text' | 'number' | 'date'
+  placeholder?: string
+  validation?: { min?: number; max?: number; pattern?: string }
+  required?: boolean
+  dependsOn?: { stepId: string; values: string[] }
+}
+
+export interface InteractionFlow {
+  id: number
+  flow_id: string
+  name: string
+  description?: string
+  trigger_patterns: string[]
+  scenario_id?: string
+  steps: InteractionStep[]
+  on_complete: 'calculate' | 'search' | 'generate'
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateInteractionFlowRequest {
+  flow_id: string
+  name: string
+  description?: string
+  trigger_patterns?: string[]
+  scenario_id?: string
+  steps: InteractionStep[]
+  on_complete?: string
+  is_active?: boolean
 }
 
 export default configApi

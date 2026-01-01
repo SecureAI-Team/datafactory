@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy.orm import Session
 from app.db import SessionLocal, engine
-from app.models.config import ScenarioConfig, PromptTemplate, KUTypeDefinition, ParameterDefinition, CalculationRule
+from app.models.config import ScenarioConfig, PromptTemplate, KUTypeDefinition, ParameterDefinition, CalculationRule, InteractionFlow
 
 
 # ==================== Scenarios ====================
@@ -349,6 +349,171 @@ CALC_RULES = [
 ]
 
 
+# ==================== Interaction Flows ====================
+
+INTERACTION_FLOWS = [
+    {
+        "flow_id": "quote_calc",
+        "name": "报价测算流程",
+        "description": "收集产品、数量等信息，为客户生成报价",
+        "trigger_patterns": ["报价", "价格", "多少钱", "怎么卖", "售价"],
+        "scenario_id": "quote",
+        "steps": [
+            {
+                "id": "product_type",
+                "question": "请选择产品类型",
+                "type": "single",
+                "options": [
+                    {"id": "aoi", "label": "AOI 检测设备", "icon": "search"},
+                    {"id": "spi", "label": "SPI 锡膏检测", "icon": "grid"}
+                ],
+                "required": True
+            },
+            {
+                "id": "aoi_model",
+                "question": "请选择 AOI 型号",
+                "type": "single",
+                "dependsOn": {"stepId": "product_type", "values": ["aoi"]},
+                "options": [
+                    {"id": "aoi8000", "label": "AOI8000 旗舰版", "description": "高精度检测"},
+                    {"id": "aoi5000", "label": "AOI5000 标准版", "description": "性价比之选"}
+                ],
+                "required": True
+            },
+            {
+                "id": "spi_model",
+                "question": "请选择 SPI 型号",
+                "type": "single",
+                "dependsOn": {"stepId": "product_type", "values": ["spi"]},
+                "options": [
+                    {"id": "spi3000", "label": "SPI3000 高速版"},
+                    {"id": "spi2000", "label": "SPI2000 标准版"}
+                ],
+                "required": True
+            },
+            {
+                "id": "quantity",
+                "question": "请输入采购数量",
+                "type": "input",
+                "inputType": "number",
+                "placeholder": "台",
+                "validation": {"min": 1, "max": 100},
+                "required": True
+            },
+            {
+                "id": "delivery_time",
+                "question": "期望交付时间",
+                "type": "single",
+                "options": [
+                    {"id": "urgent", "label": "紧急 (1个月内)"},
+                    {"id": "normal", "label": "正常 (1-3个月)"},
+                    {"id": "flexible", "label": "灵活 (3个月以上)"}
+                ],
+                "required": False
+            }
+        ],
+        "on_complete": "calculate",
+        "is_active": True
+    },
+    {
+        "flow_id": "case_search",
+        "name": "案例检索流程",
+        "description": "通过行业、规模等条件筛选相关案例",
+        "trigger_patterns": ["案例", "成功案例", "客户案例", "项目案例"],
+        "scenario_id": "case",
+        "steps": [
+            {
+                "id": "industry",
+                "question": "请选择目标行业",
+                "type": "multiple",
+                "options": [
+                    {"id": "auto", "label": "汽车电子", "icon": "car"},
+                    {"id": "consumer", "label": "消费电子", "icon": "phone"},
+                    {"id": "telecom", "label": "通信设备", "icon": "signal"},
+                    {"id": "medical", "label": "医疗器械", "icon": "heart"},
+                    {"id": "industrial", "label": "工业控制", "icon": "factory"},
+                    {"id": "other", "label": "其他行业", "icon": "grid"}
+                ],
+                "required": True
+            },
+            {
+                "id": "scale",
+                "question": "客户规模偏好",
+                "type": "single",
+                "options": [
+                    {"id": "enterprise", "label": "大型企业 (500人以上)"},
+                    {"id": "medium", "label": "中型企业 (100-500人)"},
+                    {"id": "small", "label": "中小企业 (100人以下)"},
+                    {"id": "any", "label": "不限规模"}
+                ],
+                "required": False
+            },
+            {
+                "id": "pain_point",
+                "question": "客户主要痛点",
+                "type": "multiple",
+                "options": [
+                    {"id": "accuracy", "label": "检测精度"},
+                    {"id": "speed", "label": "检测速度"},
+                    {"id": "cost", "label": "成本控制"},
+                    {"id": "integration", "label": "系统集成"},
+                    {"id": "service", "label": "售后服务"}
+                ],
+                "required": False
+            }
+        ],
+        "on_complete": "search",
+        "is_active": True
+    },
+    {
+        "flow_id": "contribution_info",
+        "name": "材料补充流程",
+        "description": "收集上传材料的分类、产品关联等信息",
+        "trigger_patterns": [],
+        "scenario_id": None,
+        "steps": [
+            {
+                "id": "material_type",
+                "question": "请选择材料类型",
+                "type": "single",
+                "options": [
+                    {"id": "case", "label": "客户案例", "icon": "users"},
+                    {"id": "product", "label": "产品资料", "icon": "file"},
+                    {"id": "solution", "label": "解决方案", "icon": "document"},
+                    {"id": "quote", "label": "报价/商务", "icon": "money"},
+                    {"id": "other", "label": "其他材料", "icon": "tag"}
+                ],
+                "required": True
+            },
+            {
+                "id": "product_link",
+                "question": "关联产品（可选）",
+                "type": "multiple",
+                "options": [
+                    {"id": "aoi8000", "label": "AOI8000"},
+                    {"id": "aoi5000", "label": "AOI5000"},
+                    {"id": "spi3000", "label": "SPI3000"},
+                    {"id": "general", "label": "通用/无关联"}
+                ],
+                "required": False
+            },
+            {
+                "id": "visibility",
+                "question": "可见性设置",
+                "type": "single",
+                "options": [
+                    {"id": "internal", "label": "内部可见", "description": "仅公司内部使用"},
+                    {"id": "public", "label": "公开可见", "description": "可对外分享"}
+                ],
+                "required": True
+            }
+        ],
+        "on_complete": "generate",
+        "is_active": True
+    }
+]
+
+
 def seed_scenarios(db: Session):
     """Seed scenario configurations"""
     print("Seeding scenarios...")
@@ -470,6 +635,30 @@ def seed_calc_rules(db: Session):
     print(f"  Total: {count} calculation rules added")
 
 
+def seed_interaction_flows(db: Session):
+    """Seed interaction flows"""
+    print("Seeding interaction flows...")
+    count = 0
+    for flow_data in INTERACTION_FLOWS:
+        existing = db.query(InteractionFlow).filter(
+            InteractionFlow.flow_id == flow_data["flow_id"]
+        ).first()
+        
+        if not existing:
+            flow = InteractionFlow(**flow_data)
+            db.add(flow)
+            count += 1
+            print(f"  Added interaction flow: {flow_data['name']}")
+        else:
+            # Update existing
+            for key, value in flow_data.items():
+                setattr(existing, key, value)
+            print(f"  Updated interaction flow: {flow_data['name']}")
+    
+    db.commit()
+    print(f"  Total: {count} interaction flows added")
+
+
 def main():
     """Main seed function"""
     print("=" * 60)
@@ -504,6 +693,17 @@ def main():
         except Exception as e:
             print(f"  ⚠ Skipping calculation rules: table schema may be outdated")
             print(f"    Run 'alembic upgrade head' to add missing columns")
+            print(f"    Error: {type(e).__name__}")
+            db.rollback()
+            print()
+        
+        # Try to seed interaction flows (may fail if table doesn't exist yet)
+        try:
+            seed_interaction_flows(db)
+            print()
+        except Exception as e:
+            print(f"  ⚠ Skipping interaction flows: table may not exist")
+            print(f"    Run 'alembic upgrade head' to create the table")
             print(f"    Error: {type(e).__name__}")
             db.rollback()
             print()

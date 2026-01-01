@@ -215,3 +215,71 @@ class CalculationRule(Base):
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
+
+class InteractionFlow(Base):
+    """交互流程配置表 - 用于结构化问答收集信息"""
+    __tablename__ = "interaction_flows"
+    
+    id = Column(Integer, primary_key=True)
+    flow_id = Column(String(50), unique=True, nullable=False)  # quote_calc, case_search
+    name = Column(String(100), nullable=False)
+    description = Column(Text)
+    trigger_patterns = Column(JSONB, default=[])  # 触发关键词/意图
+    scenario_id = Column(String(50))  # 关联场景
+    steps = Column(JSONB, nullable=False)  # 问题步骤定义
+    on_complete = Column(String(30), default='generate')  # calculate/search/generate
+    is_active = Column(Boolean, default=True)
+    created_by = Column(Integer, ForeignKey('users.id'))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    def __repr__(self):
+        return f"<InteractionFlow {self.flow_id}>"
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "flow_id": self.flow_id,
+            "name": self.name,
+            "description": self.description,
+            "trigger_patterns": self.trigger_patterns or [],
+            "scenario_id": self.scenario_id,
+            "steps": self.steps or [],
+            "on_complete": self.on_complete,
+            "is_active": self.is_active,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class InteractionSession(Base):
+    """交互会话状态表 - 跟踪用户在交互流程中的进度"""
+    __tablename__ = "interaction_sessions"
+    
+    id = Column(Integer, primary_key=True)
+    session_id = Column(String(50), unique=True, nullable=False)
+    conversation_id = Column(String(50), nullable=False)  # 关联对话
+    flow_id = Column(String(50), nullable=False)  # 关联流程
+    user_id = Column(Integer, ForeignKey('users.id'))
+    current_step = Column(Integer, default=0)
+    collected_answers = Column(JSONB, default={})  # 已收集的答案
+    status = Column(String(20), default='active')  # active/completed/cancelled
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    def __repr__(self):
+        return f"<InteractionSession {self.session_id}>"
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "conversation_id": self.conversation_id,
+            "flow_id": self.flow_id,
+            "current_step": self.current_step,
+            "collected_answers": self.collected_answers or {},
+            "status": self.status,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+

@@ -24,8 +24,8 @@ import {
 import { useNavigate as useRouterNavigate } from 'react-router-dom'
 import { conversationsApi } from '../api/conversations'
 import { contributeApi } from '../api/contribute'
-import { interactionApi, InteractionFlow, InteractionStep } from '../api/interaction'
-import { useConversationStore, Message, InteractionData } from '../store/conversationStore'
+import { interactionApi, InteractionStep } from '../api/interaction'
+import { useConversationStore, Message } from '../store/conversationStore'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import InteractiveCard from '../components/chat/InteractiveCard'
 import clsx from 'clsx'
@@ -615,8 +615,8 @@ export default function Home() {
     },
   })
   
-  // Fetch available interaction flows
-  const { data: flowsData } = useQuery({
+  // Fetch available interaction flows (for future use in trigger detection)
+  const { data: _flowsData } = useQuery({
     queryKey: ['interaction-flows'],
     queryFn: () => interactionApi.getFlows({ is_active: true }),
     staleTime: 300000, // 5 minutes
@@ -633,8 +633,8 @@ export default function Home() {
     collectedAnswers: Record<string, string | string[]>
   } | null>(null)
   
-  // Start interaction flow
-  const startInteractionFlow = async (flowId: string) => {
+  // Start interaction flow (can be triggered by user action or automatic detection)
+  const _startInteractionFlow = async (flowId: string) => {
     if (!conversationId) return
     
     try {

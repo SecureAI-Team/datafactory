@@ -668,12 +668,8 @@ export default function Home() {
     },
   })
   
-  // Fetch available interaction flows for trigger detection
-  const { data: flowsData } = useQuery({
-    queryKey: ['interaction-flows'],
-    queryFn: () => interactionApi.getFlows({ is_active: true }),
-    staleTime: 300000, // 5 minutes
-  })
+  // NOTE: Removed flowsData query - frontend no longer triggers static flows.
+  // The backend unified intent router handles all routing decisions.
   
   // Active interaction session state
   const [activeInteraction, setActiveInteraction] = useState<{

@@ -427,10 +427,16 @@ export default function Config() {
   // Interaction Flow handlers
   useEffect(() => {
     if (flowModal.item && !flowModal.isNew) {
+      // Convert steps options to JSON strings for form editing
+      const stepsForForm = flowModal.item.steps?.map(step => ({
+        ...step,
+        options: step.options ? JSON.stringify(step.options) : '',
+      })) || []
+      
       flowForm.setFieldsValue({
         ...flowModal.item,
         trigger_patterns: flowModal.item.trigger_patterns?.join(', ') || '',
-        steps: undefined, // Exclude complex object
+        steps: stepsForForm,
       })
     } else if (flowModal.isNew) {
       flowForm.resetFields()
@@ -443,20 +449,43 @@ export default function Config() {
         ? (values.trigger_patterns as string).split(',').map((s: string) => s.trim()).filter(Boolean)
         : []
       
+      // Parse steps from form values
+      interface FormStep {
+        id: string;
+        type: string;
+        question: string;
+        options?: string;
+        required?: boolean;
+        placeholder?: string;
+      }
+      const formSteps = (values.steps as FormStep[]) || []
+      const parsedSteps: InteractionStep[] = formSteps.map((step: FormStep) => {
+        let parsedOptions: Array<{ id: string; label: string }> | undefined
+        if (step.options && typeof step.options === 'string') {
+          try {
+            parsedOptions = JSON.parse(step.options)
+          } catch {
+            parsedOptions = []
+            message.warning(`步骤 "${step.id}" 的选项格式不正确，已忽略`)
+          }
+        }
+        return {
+          id: step.id,
+          type: step.type as 'single' | 'multiple' | 'input',
+          question: step.question,
+          options: parsedOptions,
+          required: step.required,
+          placeholder: step.placeholder,
+        }
+      })
+      
       const data: CreateInteractionFlowRequest = {
         flow_id: values.flow_id as string,
         name: values.name as string,
         description: values.description as string | undefined,
         trigger_patterns: triggerPatterns,
         scenario_id: values.scenario_id as string | undefined,
-        steps: flowModal.item?.steps || [], // Keep existing steps for now
-        on_complete: values.on_complete as string | undefined,
-        is_active: values.is_active as boolean | undefined,
-      }
-      
-      if (flowModal.isNew) {
-        // For new flows, add a default step
-        data.steps = [{
+        steps: parsedSteps.length > 0 ? parsedSteps : [{
           id: 'step_1',
           question: '请输入问题内容',
           type: 'single',
@@ -465,7 +494,12 @@ export default function Config() {
             { id: 'option_2', label: '选项2' },
           ],
           required: true,
-        }]
+        }],
+        on_complete: values.on_complete as string | undefined,
+        is_active: values.is_active as boolean | undefined,
+      }
+      
+      if (flowModal.isNew) {
         createFlowMutation.mutate(data)
       } else if (flowModal.item) {
         updateFlowMutation.mutate({ flowId: flowModal.item.flow_id, data })
@@ -1498,7 +1532,8 @@ export default function Config() {
         onCancel={() => setFlowModal({ visible: false, item: null, isNew: false })}
         onOk={handleSaveFlow}
         confirmLoading={createFlowMutation.isPending || updateFlowMutation.isPending}
-        width={700}
+        width={900}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
       >
         <Form form={flowForm} layout="vertical">
           <Form.Item 
@@ -1565,29 +1600,111 @@ export default function Config() {
             <Switch checkedChildren="启用" unCheckedChildren="禁用" />
           </Form.Item>
           
-          {flowModal.item && flowModal.item.steps && (
-            <div style={{ marginTop: 16 }}>
-              <Text strong>问题步骤 ({flowModal.item.steps.length})</Text>
-              <List
-                size="small"
-                dataSource={flowModal.item.steps}
-                renderItem={(step: InteractionStep, index: number) => (
-                  <List.Item>
-                    <Space>
-                      <Tag color="blue">{index + 1}</Tag>
-                      <Text>{step.question}</Text>
-                      <Tag>{step.type === 'single' ? '单选' : step.type === 'multiple' ? '多选' : '输入'}</Tag>
-                      {step.options && <Text type="secondary">({step.options.length} 选项)</Text>}
-                    </Space>
-                  </List.Item>
-                )}
-                style={{ maxHeight: 200, overflowY: 'auto', background: '#1e293b', borderRadius: 4, padding: 8, marginTop: 8 }}
-              />
-              <Text type="secondary" style={{ fontSize: 12, marginTop: 8, display: 'block' }}>
-                注：问题步骤的详细编辑功能将在后续版本中提供
-              </Text>
-            </div>
-          )}
+          <Form.Item label="问题步骤" style={{ marginBottom: 0 }}>
+            <Form.List name="steps">
+              {(fields, { add, remove, move }) => (
+                <div style={{ background: '#1e293b', borderRadius: 8, padding: 12 }}>
+                  {fields.length === 0 && (
+                    <Text type="secondary" style={{ display: 'block', textAlign: 'center', padding: 16 }}>
+                      暂无问题，点击下方按钮添加
+                    </Text>
+                  )}
+                  {fields.map((field, index) => (
+                    <div key={field.key} style={{ marginBottom: 12, padding: 12, background: '#0f172a', borderRadius: 6 }}>
+                      <Space style={{ marginBottom: 8, width: '100%', justifyContent: 'space-between' }}>
+                        <Space>
+                          <Tag color="blue">步骤 {index + 1}</Tag>
+                          {index > 0 && (
+                            <Button size="small" onClick={() => move(index, index - 1)}>↑ 上移</Button>
+                          )}
+                          {index < fields.length - 1 && (
+                            <Button size="small" onClick={() => move(index, index + 1)}>↓ 下移</Button>
+                          )}
+                        </Space>
+                        <Button size="small" danger onClick={() => remove(field.name)} icon={<DeleteOutlined />}>
+                          删除
+                        </Button>
+                      </Space>
+                      
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        <Form.Item
+                          {...field}
+                          name={[field.name, 'id']}
+                          label="步骤ID"
+                          rules={[{ required: true }]}
+                          style={{ marginBottom: 8 }}
+                        >
+                          <Input placeholder="product_type" size="small" />
+                        </Form.Item>
+                        
+                        <Form.Item
+                          {...field}
+                          name={[field.name, 'type']}
+                          label="类型"
+                          rules={[{ required: true }]}
+                          style={{ marginBottom: 8 }}
+                        >
+                          <Select size="small">
+                            <Select.Option value="single">单选</Select.Option>
+                            <Select.Option value="multiple">多选</Select.Option>
+                            <Select.Option value="input">输入框</Select.Option>
+                          </Select>
+                        </Form.Item>
+                      </div>
+                      
+                      <Form.Item
+                        {...field}
+                        name={[field.name, 'question']}
+                        label="问题内容"
+                        rules={[{ required: true }]}
+                        style={{ marginBottom: 8 }}
+                      >
+                        <Input placeholder="请选择产品类型" size="small" />
+                      </Form.Item>
+                      
+                      <Form.Item
+                        {...field}
+                        name={[field.name, 'options']}
+                        label="选项 (JSON)"
+                        extra='格式: [{"id":"opt1","label":"选项1"},{"id":"opt2","label":"选项2"}]'
+                        style={{ marginBottom: 8 }}
+                      >
+                        <TextArea rows={2} placeholder='[{"id":"aoi","label":"AOI 检测"},{"id":"spi","label":"SPI 检测"}]' style={{ fontSize: 12 }} />
+                      </Form.Item>
+                      
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        <Form.Item
+                          {...field}
+                          name={[field.name, 'required']}
+                          valuePropName="checked"
+                          style={{ marginBottom: 0 }}
+                        >
+                          <Switch checkedChildren="必填" unCheckedChildren="可选" size="small" />
+                        </Form.Item>
+                        
+                        <Form.Item
+                          {...field}
+                          name={[field.name, 'placeholder']}
+                          label="占位符"
+                          style={{ marginBottom: 0 }}
+                        >
+                          <Input placeholder="请输入..." size="small" />
+                        </Form.Item>
+                      </div>
+                    </div>
+                  ))}
+                  <Button 
+                    type="dashed" 
+                    block 
+                    onClick={() => add({ id: `step_${fields.length + 1}`, type: 'single', question: '', required: true })}
+                    icon={<PlusOutlined />}
+                  >
+                    添加问题步骤
+                  </Button>
+                </div>
+              )}
+            </Form.List>
+          </Form.Item>
         </Form>
       </Modal>
     </div>

@@ -136,7 +136,7 @@ export function InteractiveCard({
   }
 
   return (
-    <div className="bg-gradient-to-br from-dark-800/90 to-dark-900/90 border border-dark-700/50 rounded-xl p-5 shadow-lg backdrop-blur-sm min-w-[360px] max-w-lg animate-fade-in">
+    <div className="bg-gradient-to-br from-dark-800/90 to-dark-900/90 border border-dark-700/50 rounded-xl p-5 shadow-lg backdrop-blur-sm min-w-[450px] max-w-xl animate-fade-in">
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">

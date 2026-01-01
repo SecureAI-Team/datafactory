@@ -1345,12 +1345,15 @@ async def answer_interaction(
     session.current_step += 1
     flag_modified(session, "collected_answers")  # Ensure SQLAlchemy detects JSONB change
     
-    logger.info(f"[InteractionAnswer] After update - answers={answers}")
+    logger.info(f"[InteractionAnswer] After update - answers={answers}, keys={list(answers.keys())}")
     logger.info(f"[InteractionAnswer] Flow steps: {[s.get('id') for s in (flow.steps or [])]}")
+    
+    # Flush to ensure session is updated before any further operations
+    db.flush()
     
     # Get next step based on conditions
     next_step = _get_next_step(flow.steps, answers)
-    logger.info(f"[InteractionAnswer] next_step={next_step.get('id') if next_step else None}")
+    logger.info(f"[InteractionAnswer] next_step={next_step.get('id') if next_step else 'None (completed)'}")
     
     if next_step is None:
         # All questions answered - complete the session

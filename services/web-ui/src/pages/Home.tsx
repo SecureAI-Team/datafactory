@@ -593,6 +593,15 @@ export default function Home() {
       addMessage(message)
       setSending(false)
       queryClient.invalidateQueries({ queryKey: ['conversations'] })
+      
+      // 检查是否有 LLM 智能触发的交互流程
+      if (message.interaction_trigger && conversationId) {
+        const trigger = message.interaction_trigger
+        console.log(`LLM triggered interaction flow: ${trigger.flow_id} (conf=${trigger.confidence})`)
+        
+        // 自动启动交互流程
+        void startInteractionFlow(trigger.flow_id)
+      }
     },
     onError: () => {
       setSending(false)

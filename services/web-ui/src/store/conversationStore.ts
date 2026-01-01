@@ -32,6 +32,15 @@ export interface InteractionData {
   collectedAnswers: Record<string, string | string[]>
 }
 
+// LLM 触发的交互流程信息
+export interface InteractionTriggerInfo {
+  flow_id: string
+  flow_name: string
+  description?: string
+  confidence: number
+  reason: string
+}
+
 export interface Message {
   id: number
   message_id: string
@@ -45,6 +54,8 @@ export interface Message {
   created_at: string
   // Interactive message data
   interaction?: InteractionData
+  // LLM 智能触发的交互流程信息
+  interaction_trigger?: InteractionTriggerInfo
 }
 
 export interface Conversation {

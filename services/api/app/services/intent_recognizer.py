@@ -26,6 +26,7 @@ class IntentType(str, Enum):
     CALCULATION = "calculation"                          # 计算/选型
     CASE_STUDY = "case_study"                            # 案例查询
     QUOTE = "quote"                                      # 报价咨询（Phase 6 新增）
+    INTERACTION_FLOW = "interaction_flow"                # 需要交互流程（多步骤收集信息）
     GENERAL = "general"                                  # 通用
 
 
@@ -518,6 +519,7 @@ class IntentRecognizer:
             IntentType.CALCULATION: "需要计算或选型",
             IntentType.CASE_STUDY: "寻找案例或实例",
             IntentType.QUOTE: "咨询价格或报价",
+            IntentType.INTERACTION_FLOW: "需要多步骤交互收集信息",
             IntentType.GENERAL: "一般性问题",
         }
         return descriptions.get(intent_type, "")

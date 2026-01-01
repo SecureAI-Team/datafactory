@@ -10,7 +10,9 @@ from ..db import get_db
 from ..services.conversation_service import ConversationService
 from ..services.retrieval import search
 from ..services.intent_recognizer import recognize_intent, get_intent_recognizer, IntentType
+from ..services.interaction_flow_trigger import detect_interaction_trigger
 from ..models.user import User
+from ..models.config import InteractionFlow
 from ..config import settings
 from .auth import get_current_user, get_current_user_optional
 
@@ -73,6 +75,15 @@ class ConversationResponse(BaseModel):
     updated_at: Optional[str]
 
 
+class InteractionTriggerInfo(BaseModel):
+    """交互流程触发信息"""
+    flow_id: str
+    flow_name: str
+    description: Optional[str] = None
+    confidence: float
+    reason: str
+
+
 class MessageResponse(BaseModel):
     model_config = {"protected_namespaces": ()}
     
@@ -86,6 +97,8 @@ class MessageResponse(BaseModel):
     model_used: Optional[str]
     latency_ms: Optional[int]
     created_at: Optional[str]
+    # 交互流程触发信息（可选）
+    interaction_trigger: Optional[InteractionTriggerInfo] = None
 
 
 class ConversationListResponse(BaseModel):
@@ -279,7 +292,7 @@ async def send_message(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """发送消息（触发 RAG 回答）"""
+    """发送消息（触发 RAG 回答，支持交互流程智能触发）"""
     service = ConversationService(db)
     
     # 验证对话存在
@@ -297,16 +310,67 @@ async def send_message(
         content=body.content
     )
     
-    # 调用 RAG 服务获取回答
+    # ==================== 交互流程智能触发检测 ====================
+    interaction_trigger_info = None
+    try:
+        client = get_llm_client()
+        trigger_result = detect_interaction_trigger(
+            db=db,
+            query=body.content,
+            llm_client=client,
+            use_llm=True
+        )
+        
+        if trigger_result.should_trigger and trigger_result.flow_id:
+            # 获取流程详情
+            flow = db.query(InteractionFlow).filter(
+                InteractionFlow.flow_id == trigger_result.flow_id,
+                InteractionFlow.is_active == True
+            ).first()
+            
+            if flow:
+                logger.info(f"Interaction flow triggered: {flow.flow_id} (conf={trigger_result.confidence:.2f})")
+                interaction_trigger_info = InteractionTriggerInfo(
+                    flow_id=flow.flow_id,
+                    flow_name=flow.name,
+                    description=flow.description,
+                    confidence=trigger_result.confidence,
+                    reason=trigger_result.reason
+                )
+                
+                # 生成引导用户开始交互流程的回复
+                assistant_content = _generate_flow_intro_message(flow, trigger_result)
+                sources = []
+                model_used = "interaction_trigger"
+                
+                assistant_message = service.add_message(
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    content=assistant_content,
+                    sources=sources,
+                    model_used=model_used
+                )
+                
+                response_dict = assistant_message.to_dict()
+                response_dict["interaction_trigger"] = interaction_trigger_info.model_dump()
+                return MessageResponse(**response_dict)
+                
+    except Exception as e:
+        logger.warning(f"Interaction flow trigger detection failed: {e}")
+        # 继续正常 RAG 流程
+    
+    # ==================== 正常 RAG 回答流程 ====================
     try:
         rag_result = await _generate_rag_response(
             query=body.content,
             conversation_id=conversation_id,
-            scenario_id=conv.scenario_id
+            scenario_id=conv.scenario_id,
+            db=db
         )
         assistant_content = rag_result["answer"]
         sources = rag_result["sources"]
         model_used = rag_result.get("model", "qwen-max")
+        interaction_trigger_info = rag_result.get("interaction_trigger")
     except Exception as e:
         logger.error(f"RAG generation error: {e}")
         assistant_content = f"抱歉，生成回答时遇到问题，请稍后重试。错误信息：{str(e)}"
@@ -321,19 +385,36 @@ async def send_message(
         model_used=model_used
     )
     
-    return MessageResponse(**assistant_message.to_dict())
+    response_dict = assistant_message.to_dict()
+    if interaction_trigger_info:
+        response_dict["interaction_trigger"] = interaction_trigger_info.model_dump() if hasattr(interaction_trigger_info, 'model_dump') else interaction_trigger_info
+    return MessageResponse(**response_dict)
+
+
+def _generate_flow_intro_message(flow: InteractionFlow, trigger_result) -> str:
+    """生成交互流程引导消息"""
+    intro_messages = {
+        "quote_calc": "为了给您准确的报价信息，我需要了解一些细节。请点击下方按钮开始报价测算流程。",
+        "case_search": "为了找到最匹配您需求的案例，我需要了解一些信息。请点击下方按钮开始案例检索。",
+        "contribution_info": "感谢您愿意补充材料！请点击下方按钮填写材料信息。",
+    }
+    
+    default_intro = f"为了更好地帮助您，我需要收集一些信息。请点击下方按钮开始「{flow.name}」流程。"
+    
+    return intro_messages.get(flow.flow_id, default_intro)
 
 
 async def _generate_rag_response(
     query: str,
     conversation_id: str,
-    scenario_id: Optional[str] = None
+    scenario_id: Optional[str] = None,
+    db: Session = None
 ) -> dict:
     """
     Generate RAG response using retrieval and LLM
     
     Returns:
-        dict with keys: answer, sources, model
+        dict with keys: answer, sources, model, interaction_trigger (optional)
     """
     # 1. 意图识别
     client = get_llm_client()

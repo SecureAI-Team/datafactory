@@ -17,5 +17,5 @@ export type { Scenario, PromptTemplate, KUType, ParameterDefinition, Calculation
 export type { LLMProvider, LLMModel, ModelAssignment, IntegrationStatus, SystemConfig, FeatureFlag } from './settings'
 export type { Task, CreateTaskRequest, UpdateTaskRequest, TaskStats } from './tasks'
 export type { LLMProvider as LLMProviderConfig, LLMModel as LLMModelConfig, LLMAssignment } from './llm'
-export type { DedupGroup, DedupStats, KUCandidate } from './dedup'
+export type { DedupGroup, DedupStats, KUCandidate, CreateDedupGroupRequest, SimilarKU } from './dedup'
 

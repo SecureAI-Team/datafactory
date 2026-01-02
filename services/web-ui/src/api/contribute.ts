@@ -181,6 +181,53 @@ export const contributeApi = {
     const response = await apiClient.post('/api/contribute/classify', data)
     return response.data
   },
+
+  // ==================== Notifications ====================
+  
+  // Get notifications
+  getNotifications: async (params?: {
+    unread_only?: boolean
+    limit?: number
+    offset?: number
+  }): Promise<NotificationsResponse> => {
+    const response = await apiClient.get('/api/contribute/notifications', { params })
+    return response.data
+  },
+
+  // Mark notification as read
+  markNotificationRead: async (notificationId: number): Promise<void> => {
+    await apiClient.post(`/api/contribute/notifications/${notificationId}/read`)
+  },
+
+  // Mark all notifications as read
+  markAllNotificationsRead: async (): Promise<void> => {
+    await apiClient.post('/api/contribute/notifications/read-all')
+  },
+
+  // Get unread count
+  getUnreadNotificationCount: async (): Promise<{ unread_count: number }> => {
+    const response = await apiClient.get('/api/contribute/notifications/count')
+    return response.data
+  },
+}
+
+// Notification types
+export interface Notification {
+  id: number
+  notification_type: string
+  title: string
+  message?: string
+  related_type?: string
+  related_id?: number
+  is_read: boolean
+  created_at: string
+  read_at?: string
+}
+
+export interface NotificationsResponse {
+  total: number
+  unread_count: number
+  notifications: Notification[]
 }
 
 export default contributeApi

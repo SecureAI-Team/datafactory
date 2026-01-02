@@ -90,6 +90,26 @@ export const reviewApi = {
     const response = await apiClient.get(`/api/review/${contributionId}/content`)
     return response.data
   },
+
+  // Reindex all approved KUs to OpenSearch
+  reindexAll: async (): Promise<{ 
+    total_approved: number
+    indexed: number
+    failed: number
+    skipped: number 
+  }> => {
+    const response = await apiClient.post('/api/review/reindex-all')
+    return response.data
+  },
+
+  // Reindex single contribution's KU
+  reindexSingle: async (contributionId: number): Promise<{
+    indexed: boolean
+    ku_id?: number
+  }> => {
+    const response = await apiClient.post(`/api/review/reindex/${contributionId}`)
+    return response.data
+  },
 }
 
 export default reviewApi

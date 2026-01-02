@@ -129,3 +129,63 @@ class CitationRecord(Base):
     def __repr__(self):
         return f"<CitationRecord ku_id={self.ku_id}>"
 
+
+class Notification(Base):
+    """用户通知表"""
+    __tablename__ = "notifications"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+    notification_type = Column(String(50), nullable=False)  # needs_info, approved, rejected, etc.
+    title = Column(String(200), nullable=False)
+    message = Column(Text)
+    
+    # 关联的实体
+    related_type = Column(String(50))  # contribution, ku, conversation
+    related_id = Column(Integer)  # 关联实体的 ID
+    
+    # 状态
+    is_read = Column(Boolean, default=False, index=True)
+    
+    # 时间戳
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    read_at = Column(DateTime(timezone=True))
+    
+    def __repr__(self):
+        return f"<Notification {self.id} type={self.notification_type}>"
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "notification_type": self.notification_type,
+            "title": self.title,
+            "message": self.message,
+            "related_type": self.related_type,
+            "related_id": self.related_id,
+            "is_read": self.is_read,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "read_at": self.read_at.isoformat() if self.read_at else None,
+        }
+
+
+def create_notification(
+    db,
+    user_id: int,
+    notification_type: str,
+    title: str,
+    message: str = None,
+    related_type: str = None,
+    related_id: int = None
+):
+    """创建通知的辅助函数"""
+    notification = Notification(
+        user_id=user_id,
+        notification_type=notification_type,
+        title=title,
+        message=message,
+        related_type=related_type,
+        related_id=related_id
+    )
+    db.add(notification)
+    return notification

@@ -698,3 +698,113 @@ def _update_contribution_stats(
     
     stats.updated_at = datetime.now(timezone.utc)
 
+
+# ==================== Notification Endpoints ====================
+
+class NotificationResponse(BaseModel):
+    id: int
+    notification_type: str
+    title: str
+    message: Optional[str]
+    related_type: Optional[str]
+    related_id: Optional[int]
+    is_read: bool
+    created_at: Optional[str]
+
+
+@router.get("/notifications")
+async def get_my_notifications(
+    unread_only: bool = False,
+    limit: int = 20,
+    offset: int = 0,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取我的通知列表"""
+    from ..models.contribution import Notification
+    
+    query = db.query(Notification).filter(
+        Notification.user_id == user.id
+    )
+    
+    if unread_only:
+        query = query.filter(Notification.is_read == False)
+    
+    total = query.count()
+    notifications = query.order_by(
+        desc(Notification.created_at)
+    ).offset(offset).limit(limit).all()
+    
+    return {
+        "total": total,
+        "unread_count": db.query(Notification).filter(
+            Notification.user_id == user.id,
+            Notification.is_read == False
+        ).count(),
+        "notifications": [n.to_dict() for n in notifications]
+    }
+
+
+@router.post("/notifications/{notification_id}/read")
+async def mark_notification_read(
+    notification_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """标记通知为已读"""
+    from ..models.contribution import Notification
+    
+    notification = db.query(Notification).filter(
+        Notification.id == notification_id,
+        Notification.user_id == user.id
+    ).first()
+    
+    if not notification:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Notification not found"
+        )
+    
+    notification.is_read = True
+    notification.read_at = datetime.now(timezone.utc)
+    db.commit()
+    
+    return {"message": "Notification marked as read"}
+
+
+@router.post("/notifications/read-all")
+async def mark_all_notifications_read(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """标记所有通知为已读"""
+    from ..models.contribution import Notification
+    
+    db.query(Notification).filter(
+        Notification.user_id == user.id,
+        Notification.is_read == False
+    ).update({
+        "is_read": True,
+        "read_at": datetime.now(timezone.utc)
+    })
+    
+    db.commit()
+    
+    return {"message": "All notifications marked as read"}
+
+
+@router.get("/notifications/count")
+async def get_unread_notification_count(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取未读通知数量"""
+    from ..models.contribution import Notification
+    
+    count = db.query(Notification).filter(
+        Notification.user_id == user.id,
+        Notification.is_read == False
+    ).count()
+    
+    return {"unread_count": count}
+

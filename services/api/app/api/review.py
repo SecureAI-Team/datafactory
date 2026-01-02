@@ -268,6 +268,7 @@ async def approve_contribution(
     """批准贡献并创建知识单元"""
     from ..models.legacy import KnowledgeUnit, SourceDocument
     from ..models.user import User as UserModel
+    from ..models.contribution import create_notification
     
     contribution = db.query(Contribution).filter(
         Contribution.id == contribution_id
@@ -382,13 +383,31 @@ async def approve_contribution(
     # Update contributor stats
     _update_stats_on_review(db, contribution.contributor_id, approved=True)
     
+    # Create notification for the contributor
+    create_notification(
+        db=db,
+        user_id=contribution.contributor_id,
+        notification_type="approved",
+        title="您的贡献已被采纳！",
+        message=f"您提交的「{contribution.title or '未命名'}」已通过审核并入库。感谢您的贡献！",
+        related_type="contribution",
+        related_id=contribution.id
+    )
+    
     db.commit()
+    
+    # Index KU to OpenSearch for RAG retrieval
+    indexed = False
+    if ku:
+        from ..services.retrieval import index_ku_to_opensearch
+        indexed = index_ku_to_opensearch(ku, source_doc)
     
     return {
         "message": "Contribution approved and KU created",
         "contribution_id": contribution_id,
         "ku_id": ku.id if ku else None,
-        "source_document_id": source_doc.id if source_doc else None
+        "source_document_id": source_doc.id if source_doc else None,
+        "indexed_to_opensearch": indexed
     }
 
 
@@ -400,6 +419,8 @@ async def reject_contribution(
     db: Session = Depends(get_db)
 ):
     """拒绝贡献"""
+    from ..models.contribution import create_notification
+    
     contribution = db.query(Contribution).filter(
         Contribution.id == contribution_id
     ).first()
@@ -425,6 +446,17 @@ async def reject_contribution(
     # Update contributor stats
     _update_stats_on_review(db, contribution.contributor_id, rejected=True)
     
+    # Create notification for the contributor
+    create_notification(
+        db=db,
+        user_id=contribution.contributor_id,
+        notification_type="rejected",
+        title="您的贡献未被采纳",
+        message=f"您提交的「{contribution.title or '未命名'}」未通过审核。原因：{body.reason}",
+        related_type="contribution",
+        related_id=contribution.id
+    )
+    
     db.commit()
     
     return {
@@ -441,6 +473,8 @@ async def request_more_info(
     db: Session = Depends(get_db)
 ):
     """请求补充信息"""
+    from ..models.contribution import create_notification
+    
     contribution = db.query(Contribution).filter(
         Contribution.id == contribution_id
     ).first()
@@ -462,6 +496,17 @@ async def request_more_info(
     contribution.reviewer_id = admin.id
     contribution.review_comment = f"需要补充信息: {body.questions}"
     contribution.reviewed_at = datetime.now(timezone.utc)
+    
+    # Create notification for the contributor
+    create_notification(
+        db=db,
+        user_id=contribution.contributor_id,
+        notification_type="needs_info",
+        title="您的贡献需要补充信息",
+        message=f"您提交的「{contribution.title or '未命名'}」需要补充以下信息：\n{body.questions}",
+        related_type="contribution",
+        related_id=contribution.id
+    )
     
     db.commit()
     
@@ -500,6 +545,8 @@ async def batch_review(
     
     processed = 0
     kus_created = 0
+    indexed_count = 0
+    created_kus = []  # Track created KUs for indexing after commit
     
     for contribution in contributions:
         if body.action == "approve":
@@ -511,6 +558,7 @@ async def batch_review(
             if ku:
                 contribution.processed_ku_id = ku.id
                 kus_created += 1
+                created_kus.append(ku)
         else:
             contribution.status = "rejected"
             _update_stats_on_review(db, contribution.contributor_id, rejected=True)
@@ -522,10 +570,18 @@ async def batch_review(
     
     db.commit()
     
+    # Index all created KUs to OpenSearch
+    if created_kus:
+        from ..services.retrieval import index_ku_to_opensearch
+        for ku in created_kus:
+            if index_ku_to_opensearch(ku):
+                indexed_count += 1
+    
     return {
         "message": f"Batch review completed",
         "processed": processed,
         "kus_created": kus_created,
+        "indexed_to_opensearch": indexed_count,
         "action": body.action
     }
 
@@ -719,4 +775,124 @@ def _update_stats_on_review(
         stats.pending_count = max(0, stats.pending_count - 1)
     
     stats.updated_at = datetime.now(timezone.utc)
+
+
+# ==================== Reindex Endpoints ====================
+
+@router.post("/reindex-all")
+async def reindex_all_approved_kus(
+    admin: User = Depends(require_role("admin")),
+    db: Session = Depends(get_db)
+):
+    """
+    将所有已审批的贡献对应的 KU 重新索引到 OpenSearch
+    
+    用于：
+    - 修复历史数据（审批后未索引的 KU）
+    - OpenSearch 索引重建后恢复数据
+    """
+    from ..models.legacy import KnowledgeUnit, SourceDocument
+    from ..services.retrieval import index_ku_to_opensearch
+    
+    # 获取所有已审批且有 KU 的贡献
+    approved_contributions = db.query(Contribution).filter(
+        Contribution.status == "approved",
+        Contribution.processed_ku_id.isnot(None)
+    ).all()
+    
+    indexed = 0
+    failed = 0
+    skipped = 0
+    
+    for contrib in approved_contributions:
+        # 获取关联的 KU
+        ku = db.query(KnowledgeUnit).filter(
+            KnowledgeUnit.id == contrib.processed_ku_id
+        ).first()
+        
+        if not ku:
+            skipped += 1
+            continue
+        
+        # 获取关联的 SourceDocument（如果有）
+        source_doc = None
+        if contrib.contribution_type == "file_upload" and contrib.file_path:
+            source_doc = db.query(SourceDocument).filter(
+                SourceDocument.minio_uri.contains(contrib.file_path)
+            ).first()
+        
+        # 索引到 OpenSearch
+        if index_ku_to_opensearch(ku, source_doc):
+            indexed += 1
+        else:
+            failed += 1
+    
+    return {
+        "message": "Reindex completed",
+        "total_approved": len(approved_contributions),
+        "indexed": indexed,
+        "failed": failed,
+        "skipped": skipped
+    }
+
+
+@router.post("/reindex/{contribution_id}")
+async def reindex_single_ku(
+    contribution_id: int,
+    admin: User = Depends(require_role("admin", "data_ops")),
+    db: Session = Depends(get_db)
+):
+    """重新索引单个贡献对应的 KU"""
+    from ..models.legacy import KnowledgeUnit, SourceDocument
+    from ..services.retrieval import index_ku_to_opensearch
+    
+    contribution = db.query(Contribution).filter(
+        Contribution.id == contribution_id
+    ).first()
+    
+    if not contribution:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contribution not found"
+        )
+    
+    if contribution.status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only approved contributions can be reindexed"
+        )
+    
+    if not contribution.processed_ku_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Contribution has no associated KU"
+        )
+    
+    # 获取 KU
+    ku = db.query(KnowledgeUnit).filter(
+        KnowledgeUnit.id == contribution.processed_ku_id
+    ).first()
+    
+    if not ku:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Associated KU not found"
+        )
+    
+    # 获取 SourceDocument
+    source_doc = None
+    if contribution.contribution_type == "file_upload" and contribution.file_path:
+        source_doc = db.query(SourceDocument).filter(
+            SourceDocument.minio_uri.contains(contribution.file_path)
+        ).first()
+    
+    # 索引到 OpenSearch
+    success = index_ku_to_opensearch(ku, source_doc)
+    
+    return {
+        "message": "Reindex completed" if success else "Reindex failed",
+        "contribution_id": contribution_id,
+        "ku_id": ku.id,
+        "indexed": success
+    }
 

@@ -115,6 +115,7 @@ export default function Dashboard() {
   const queryClient = useQueryClient()
   const [pipelineModalVisible, setPipelineModalVisible] = useState(false)
   const [selectedDag, setSelectedDag] = useState('ingest_to_bronze')
+  const [reindexing, setReindexing] = useState(false)
   
   // Fetch overview stats
   const { data: overview, isLoading: loadingOverview, error: overviewError } = useQuery({
@@ -211,6 +212,33 @@ export default function Dashboard() {
       message.error('触发 Pipeline 失败')
     },
   })
+
+  // Reindex all KUs mutation
+  const reindexMutation = useMutation({
+    mutationFn: () => reviewApi.reindexAll(),
+    onSuccess: (result) => {
+      message.success(`重建索引完成: 成功 ${result.indexed} 个, 失败 ${result.failed} 个`)
+      setReindexing(false)
+      queryClient.invalidateQueries({ queryKey: ['stats-overview'] })
+    },
+    onError: () => {
+      message.error('重建索引失败')
+      setReindexing(false)
+    },
+  })
+
+  const handleReindex = () => {
+    Modal.confirm({
+      title: '重建 OpenSearch 索引',
+      content: '这将重新索引所有已审批的贡献到 OpenSearch，确保它们可被检索。此操作可能需要一些时间。',
+      okText: '确认重建',
+      cancelText: '取消',
+      onOk: () => {
+        setReindexing(true)
+        reindexMutation.mutate()
+      },
+    })
+  }
   
   // Handle errors
   if (overviewError) {
@@ -224,13 +252,22 @@ export default function Dashboard() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <Title level={2} style={{ marginBottom: 0 }}>仪表盘</Title>
-        <Button
-          type="primary"
-          icon={<ThunderboltOutlined />}
-          onClick={() => setPipelineModalVisible(true)}
-        >
-          处理新材料
-        </Button>
+        <Space>
+          <Button
+            icon={<SyncOutlined spin={reindexing} />}
+            onClick={handleReindex}
+            loading={reindexing}
+          >
+            重建索引
+          </Button>
+          <Button
+            type="primary"
+            icon={<ThunderboltOutlined />}
+            onClick={() => setPipelineModalVisible(true)}
+          >
+            处理新材料
+          </Button>
+        </Space>
       </div>
       
       {/* Stats Cards */}

@@ -27,6 +27,116 @@ from .param_extractor import (
 logger = logging.getLogger(__name__)
 
 
+# ==================== 索引管理 ====================
+
+def index_ku_to_opensearch(ku, source_doc=None) -> bool:
+    """
+    将 KnowledgeUnit 索引到 OpenSearch
+    
+    Args:
+        ku: KnowledgeUnit 对象
+        source_doc: 关联的 SourceDocument（可选）
+    
+    Returns:
+        是否索引成功
+    """
+    from datetime import datetime
+    import hashlib
+    
+    try:
+        # 构建索引文档
+        doc = {
+            # 基础内容字段
+            "title": ku.title or "Untitled",
+            "summary": ku.summary or "",
+            "full_text": ku.body_markdown or "",
+            "key_points": [],  # 可以后续从内容提取
+            "terms": ku.tags_json or [],
+            
+            # 场景化字段
+            "scenario_id": "",
+            "scenario_tags": [],
+            "solution_id": "",
+            "intent_types": [],
+            "material_type": ku.ku_type or "general",
+            "applicability_score": 0.5,
+            
+            # 结构化参数（从内容中提取）
+            "params": [],
+            
+            # 来源信息
+            "source_file": source_doc.filename if source_doc else "",
+            "original_path": source_doc.minio_uri if source_doc else "",
+            "indexed_at": datetime.utcnow().isoformat(),
+            
+            # 多资料处理字段
+            "ku_type": ku.ku_type or "core",
+            "product_id": ku.product_id or "",
+            "industry_tags": ku.industry_tags or [],
+            "use_case_tags": ku.use_case_tags or [],
+            "parent_ku_id": "",
+            "is_primary": False,
+            "related_ku_ids": [],
+            
+            # 元数据
+            "ku_db_id": ku.id,  # 数据库 ID，用于关联
+            "created_by": ku.created_by or "unknown",
+        }
+        
+        # 从 sections_json 提取关键点
+        if ku.sections_json:
+            for section in ku.sections_json:
+                if isinstance(section, dict):
+                    heading = section.get("heading", "")
+                    content = section.get("content", "")
+                    if heading:
+                        doc["key_points"].append(heading)
+                    if content and len(doc["full_text"]) < 50000:
+                        doc["full_text"] += f"\n\n{heading}\n{content}"
+        
+        # 生成文档 ID（基于 KU ID）
+        doc_id = f"ku_{ku.id}"
+        
+        # 索引到 OpenSearch
+        os_client.index(
+            index=settings.os_index,
+            id=doc_id,
+            body=doc,
+            refresh=True  # 立即可搜索
+        )
+        
+        logger.info(f"Successfully indexed KU {ku.id} to OpenSearch: {ku.title[:50] if ku.title else 'Untitled'}...")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to index KU {ku.id} to OpenSearch: {e}")
+        return False
+
+
+def delete_ku_from_opensearch(ku_id: int) -> bool:
+    """
+    从 OpenSearch 删除 KnowledgeUnit
+    
+    Args:
+        ku_id: KnowledgeUnit 的数据库 ID
+    
+    Returns:
+        是否删除成功
+    """
+    try:
+        doc_id = f"ku_{ku_id}"
+        os_client.delete(
+            index=settings.os_index,
+            id=doc_id,
+            ignore=[404]  # 如果不存在也不报错
+        )
+        logger.info(f"Deleted KU {ku_id} from OpenSearch")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to delete KU {ku_id} from OpenSearch: {e}")
+        return False
+
+
 def search(
     query: str,
     filters: Dict = None,

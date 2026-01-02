@@ -334,6 +334,16 @@ upload-test-data-aoi:
 		-e MINIO_BUCKET=uploads \
 		api python scripts/upload_test_data.py --scenario aoi_inspection
 
+# 上传工业安全场景测试数据
+upload-test-data-security:
+	@echo "=== 上传工业网络安全场景测试数据 ==="
+	$(COMPOSE) run --rm -v $(PWD):/work -w /work \
+		-e MINIO_ENDPOINT=minio:9000 \
+		-e MINIO_ACCESS_KEY=$(MINIO_ROOT_USER) \
+		-e MINIO_SECRET_KEY=$(MINIO_ROOT_PASSWORD) \
+		-e MINIO_BUCKET=uploads \
+		api python scripts/upload_test_data.py --scenario industrial_security
+
 # 预览测试数据（不上传）
 upload-test-data-dry:
 	@echo "=== 预览测试数据（不实际上传）==="
@@ -839,9 +849,10 @@ help:
 	@echo "    make backup           - 备份数据"
 	@echo ""
 	@echo "  测试数据:"
-	@echo "    make upload-test-data     - 上传所有测试数据"
-	@echo "    make upload-test-data-aoi - 上传 AOI 场景测试数据"
-	@echo "    make upload-test-data-dry - 预览测试数据（不上传）"
+	@echo "    make upload-test-data          - 上传所有测试数据"
+	@echo "    make upload-test-data-aoi      - 上传 AOI 场景测试数据"
+	@echo "    make upload-test-data-security - 上传工业安全场景测试数据"
+	@echo "    make upload-test-data-dry      - 预览测试数据（不上传）"
 	@echo ""
 	@echo "  验证:"
 	@echo "    make verify    - 验证 RAG 流程"

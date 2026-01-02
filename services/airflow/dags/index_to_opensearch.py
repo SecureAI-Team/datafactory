@@ -2,6 +2,7 @@
 Index to OpenSearch DAG
 将gold bucket中的知识单元索引到OpenSearch
 支持场景化字段和结构化参数
+同时在数据库中创建对应的KU记录
 """
 from airflow import DAG
 from airflow.operators.python import PythonOperator
@@ -12,6 +13,8 @@ import json
 import os
 import tempfile
 import hashlib
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 # Configuration
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio:9000")
@@ -20,6 +23,24 @@ MINIO_SECRET_KEY = os.getenv("MINIO_ROOT_PASSWORD", "minioadmin123")
 OPENSEARCH_HOST = os.getenv("OPENSEARCH_HOST", "opensearch")
 OPENSEARCH_PORT = int(os.getenv("OPENSEARCH_PORT", "9200"))
 OPENSEARCH_INDEX = os.getenv("OPENSEARCH_INDEX", "knowledge_units")
+
+# Database configuration
+DB_HOST = os.getenv("POSTGRES_HOST", "postgres")
+DB_PORT = os.getenv("POSTGRES_PORT", "5432")
+DB_NAME = os.getenv("POSTGRES_DB", "adf")
+DB_USER = os.getenv("POSTGRES_USER", "adf")
+DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "adfpass")
+
+
+def get_db_connection():
+    """获取数据库连接"""
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD
+    )
 
 
 def get_index_mapping():
@@ -31,6 +52,9 @@ def get_index_mapping():
         },
         "mappings": {
             "properties": {
+                # 数据库关联ID
+                "ku_id": {"type": "integer"},
+                
                 # 基础内容字段
                 "title": {
                     "type": "text",
@@ -66,6 +90,8 @@ def get_index_mapping():
                 # 来源信息
                 "source_file": {"type": "keyword"},
                 "original_path": {"type": "keyword"},
+                "bronze_path": {"type": "keyword"},
+                "silver_text_path": {"type": "keyword"},
                 "indexed_at": {"type": "date"},
                 "generated_at": {"type": "date"},
             }
@@ -141,9 +167,84 @@ def validate_ku_document(ku_data: dict) -> dict:
     return ku_data
 
 
+def create_or_update_ku_record(conn, ku_data: dict, source_path: str) -> int:
+    """
+    在数据库中创建或更新KU记录
+    返回数据库中的 ku_id
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        # 检查是否已存在（基于source_file）
+        source_file = ku_data.get("source_file") or source_path
+        cur.execute("""
+            SELECT id FROM knowledge_units 
+            WHERE source_file = %s
+            LIMIT 1
+        """, (source_file,))
+        existing = cur.fetchone()
+        
+        title = ku_data.get("title", "")[:500]  # 限制长度
+        summary = ku_data.get("summary", "")
+        body_markdown = ku_data.get("full_text", "")
+        ku_type = ku_data.get("material_type", "general")
+        product_id = ku_data.get("solution_id") or ku_data.get("scenario_id")
+        tags = ku_data.get("terms", [])
+        scenario_tags = ku_data.get("scenario_tags", [])
+        key_points = ku_data.get("key_points", [])
+        params = ku_data.get("params", [])
+        
+        if existing:
+            # 更新现有记录
+            cur.execute("""
+                UPDATE knowledge_units SET
+                    title = %s,
+                    summary = %s,
+                    body_markdown = %s,
+                    ku_type = %s,
+                    product_id = %s,
+                    tags_json = %s,
+                    scenario_tags = %s,
+                    key_points_json = %s,
+                    params_json = %s,
+                    status = 'published',
+                    updated_at = NOW()
+                WHERE id = %s
+                RETURNING id
+            """, (
+                title, summary, body_markdown, ku_type, product_id,
+                json.dumps(tags), json.dumps(scenario_tags),
+                json.dumps(key_points), json.dumps(params),
+                existing["id"]
+            ))
+            ku_id = cur.fetchone()["id"]
+            print(f"  Updated existing KU record: {ku_id}")
+        else:
+            # 创建新记录
+            cur.execute("""
+                INSERT INTO knowledge_units (
+                    title, summary, body_markdown, ku_type, product_id,
+                    tags_json, scenario_tags, key_points_json, params_json,
+                    source_file, status, created_by, version
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'published', 'pipeline', 1
+                )
+                RETURNING id
+            """, (
+                title, summary, body_markdown, ku_type, product_id,
+                json.dumps(tags), json.dumps(scenario_tags),
+                json.dumps(key_points), json.dumps(params),
+                source_file
+            ))
+            ku_id = cur.fetchone()["id"]
+            print(f"  Created new KU record: {ku_id}")
+        
+        conn.commit()
+        return ku_id
+
+
 def index_to_opensearch():
     """
     Index Knowledge Units from gold bucket to OpenSearch.
+    Also creates/updates corresponding KU records in the database.
     """
     minio_client = Minio(
         MINIO_ENDPOINT,
@@ -159,6 +260,15 @@ def index_to_opensearch():
         verify_certs=False,
     )
     
+    # 获取数据库连接
+    db_conn = None
+    try:
+        db_conn = get_db_connection()
+        print("Connected to database")
+    except Exception as e:
+        print(f"Warning: Could not connect to database: {e}")
+        print("Will index to OpenSearch without creating DB records")
+    
     # 确保索引存在
     ensure_index_exists(os_client, OPENSEARCH_INDEX)
     
@@ -171,6 +281,7 @@ def index_to_opensearch():
     
     indexed = 0
     errors = 0
+    db_records_created = 0
     
     for obj in objects:
         ku_path = obj.object_name
@@ -197,6 +308,16 @@ def index_to_opensearch():
             if not ku_data.get("source_file"):
                 ku_data["source_file"] = ku_path
             
+            # 创建数据库KU记录并获取ku_id
+            ku_id = None
+            if db_conn:
+                try:
+                    ku_id = create_or_update_ku_record(db_conn, ku_data, ku_path)
+                    ku_data["ku_id"] = ku_id
+                    db_records_created += 1
+                except Exception as db_err:
+                    print(f"  Warning: Could not create DB record: {db_err}")
+            
             # 索引到OpenSearch
             os_client.index(
                 index=OPENSEARCH_INDEX,
@@ -207,7 +328,7 @@ def index_to_opensearch():
             
             print(f"  Indexed: {ku_data.get('title', 'N/A')[:40]}...")
             print(f"    Scenario: {ku_data.get('scenario_id')} | Type: {ku_data.get('material_type')}")
-            print(f"    Params: {len(ku_data.get('params', []))} | Score: {ku_data.get('applicability_score'):.2f}")
+            print(f"    Params: {len(ku_data.get('params', []))} | DB KU ID: {ku_id or 'N/A'}")
             indexed += 1
             
         except Exception as e:
@@ -216,10 +337,19 @@ def index_to_opensearch():
             traceback.print_exc()
             errors += 1
     
+    # 关闭数据库连接
+    if db_conn:
+        db_conn.close()
+    
     # 刷新索引
     os_client.indices.refresh(index=OPENSEARCH_INDEX)
     
-    result = {"indexed": indexed, "errors": errors, "total": len(objects)}
+    result = {
+        "indexed": indexed, 
+        "errors": errors, 
+        "total": len(objects),
+        "db_records": db_records_created
+    }
     print(f"Indexing complete: {result}")
     return result
 

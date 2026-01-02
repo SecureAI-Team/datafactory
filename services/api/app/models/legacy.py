@@ -71,6 +71,12 @@ class KnowledgeUnit(Base):
     merge_source_ids = Column(JSONB, default=[])  # 合并来源 KU IDs
     industry_tags = Column(JSONB, default=[])  # 行业标签
     use_case_tags = Column(JSONB, default=[])  # 使用场景标签
+    
+    # Pipeline integration fields
+    source_file = Column(String(500), nullable=True)  # 原始文件路径
+    scenario_tags = Column(JSONB, default=[])  # 场景标签
+    key_points_json = Column(JSONB, default=[])  # 关键点
+    params_json = Column(JSONB, default=[])  # 结构化参数
 
 class KUReview(Base):
     __tablename__ = "ku_reviews"

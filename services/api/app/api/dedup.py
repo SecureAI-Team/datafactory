@@ -65,8 +65,20 @@ async def create_dedup_group(
         if len(request.ku_ids) < 2:
             raise HTTPException(status_code=400, detail="At least 2 KU IDs required")
         
-        # Validate that all KU IDs exist
+        # Validate and convert KU IDs to integers
+        validated_ku_ids = []
         for ku_id in request.ku_ids:
+            try:
+                int_id = int(ku_id)
+                validated_ku_ids.append(str(int_id))
+            except ValueError:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Invalid KU ID format: '{ku_id}'. KU ID must be an integer (database ID)."
+                )
+        
+        # Validate that all KU IDs exist
+        for ku_id in validated_ku_ids:
             ku = db.query(KnowledgeUnit).filter(KnowledgeUnit.id == int(ku_id)).first()
             if not ku:
                 raise HTTPException(status_code=404, detail=f"KU {ku_id} not found")
@@ -78,7 +90,7 @@ async def create_dedup_group(
         
         for group in existing:
             group_ku_ids = group.ku_ids if isinstance(group.ku_ids, list) else json.loads(group.ku_ids)
-            overlap = set(request.ku_ids) & set(group_ku_ids)
+            overlap = set(validated_ku_ids) & set(group_ku_ids)
             if overlap:
                 raise HTTPException(
                     status_code=400, 
@@ -90,7 +102,7 @@ async def create_dedup_group(
         
         new_group = DedupGroup(
             group_id=group_id,
-            ku_ids=request.ku_ids,
+            ku_ids=validated_ku_ids,
             similarity_score=request.similarity_score,
             status="pending",
             reviewed_by=request.creator,  # Track who created it
@@ -380,7 +392,7 @@ async def find_similar_kus(
                 }
             },
             "size": limit + 1,  # +1 to exclude self
-            "_source": ["title", "summary", "ku_type", "product_id"],
+            "_source": ["ku_id", "title", "summary", "ku_type", "product_id"],
         }
         
         try:
@@ -395,18 +407,20 @@ async def find_similar_kus(
         max_score = res["hits"]["max_score"] or 1.0
         
         for hit in res["hits"]["hits"]:
-            hit_id = hit["_id"]
+            source = hit.get("_source", {})
+            # Use ku_id from source (database ID), fall back to _id if not present
+            db_ku_id = source.get("ku_id") or hit["_id"]
+            
             # Skip self
-            if str(hit_id) == str(ku_id):
+            if str(db_ku_id) == str(ku_id):
                 continue
             
             # Calculate normalized similarity score
             score = hit["_score"] / max_score if max_score > 0 else 0
             
             if score >= min_similarity:
-                source = hit.get("_source", {})
                 similar_kus.append(SimilarKUResponse(
-                    id=str(hit_id),
+                    id=str(db_ku_id),
                     title=source.get("title", ""),
                     summary=(source.get("summary", "") or "")[:300],
                     ku_type=source.get("ku_type"),

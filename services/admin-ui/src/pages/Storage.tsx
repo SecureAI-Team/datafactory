@@ -514,10 +514,13 @@ export default function Storage() {
   
   // DAG options for processing
   const dagOptions = [
-    { value: 'ingest_to_bronze', label: '原始入库 (Ingest)' },
-    { value: 'extract_to_silver', label: '解析提取 (Extract)' },
-    { value: 'expand_to_gold', label: '扩展增强 (Expand)' },
-    { value: 'index_to_opensearch', label: '索引更新 (Index)' },
+    { value: 'ingest_to_bronze', label: '原始入库 (Ingest)', desc: '将文件导入 Bronze 层' },
+    { value: 'extract_to_silver', label: '解析提取 (Extract)', desc: '提取文档内容到 Silver 层' },
+    { value: 'extract_params', label: '参数提取 (Params)', desc: '提取产品参数' },
+    { value: 'expand_and_rewrite_to_gold', label: '扩展增强 (Expand)', desc: 'LLM 扩展重写到 Gold 层' },
+    { value: 'index_to_opensearch', label: '索引更新 (Index)', desc: '同步到 OpenSearch 索引' },
+    { value: 'dq_validate_and_publish', label: '验证发布 (DQ)', desc: '数据质量验证并发布' },
+    { value: 'merge_duplicates', label: '合并去重 (Merge)', desc: '合并重复内容' },
   ]
   
   return (

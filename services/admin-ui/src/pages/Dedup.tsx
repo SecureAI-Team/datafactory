@@ -184,7 +184,7 @@ export default function Dedup() {
     
     const kuId = parseInt(searchKuId.trim(), 10)
     if (isNaN(kuId)) {
-      message.error('请输入有效的 KU ID')
+      message.error('请输入有效的数字 ID')
       return
     }
     
@@ -199,8 +199,15 @@ export default function Dedup() {
         message.info('未找到相似的 KU')
       }
     } catch (error: unknown) {
-      const err = error as Error
-      message.error(`搜索失败: ${err.message}`)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const axiosError = error as any
+      if (axiosError?.response?.status === 404) {
+        message.error(`KU ID ${kuId} 不存在，请输入有效的 KU ID`)
+      } else if (axiosError?.response?.status === 400) {
+        message.error(axiosError?.response?.data?.detail || '该 KU 无法进行相似搜索')
+      } else {
+        message.error(`搜索失败: ${axiosError?.message || '未知错误'}`)
+      }
     } finally {
       setLoadingSimilar(false)
     }

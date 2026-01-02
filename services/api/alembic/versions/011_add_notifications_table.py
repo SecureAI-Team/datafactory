@@ -1,6 +1,6 @@
 """Add notifications table
 
-Revision ID: 011
+Revision ID: 011a
 Revises: 010
 Create Date: 2024-03-01
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers
-revision = '011'
+revision = '011a'
 down_revision = '010'
 branch_labels = None
 depends_on = None

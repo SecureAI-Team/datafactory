@@ -1,7 +1,7 @@
 """Add dynamic interaction columns to interaction_sessions
 
 Revision ID: 012
-Revises: 011
+Revises: 011b
 Create Date: 2025-01-01
 
 """
@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 # revision identifiers, used by Alembic.
 revision = '012'
-down_revision = '011'
+down_revision = '011b'
 branch_labels = None
 depends_on = None
 

@@ -1,7 +1,7 @@
 """Add interaction flows and sessions tables
 
-Revision ID: 011
-Revises: 010
+Revision ID: 011b
+Revises: 011a
 Create Date: 2026-01-01
 """
 from alembic import op
@@ -9,8 +9,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 
-revision = '011'
-down_revision = '010'
+revision = '011b'
+down_revision = '011a'
 branch_labels = None
 depends_on = None
 

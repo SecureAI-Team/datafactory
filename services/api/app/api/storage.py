@@ -713,9 +713,8 @@ async def get_storage_stats(
         )
 
 
-@router.delete("/buckets/{bucket}/trash/empty")
+@router.delete("/trash/empty")
 async def empty_trash(
-    bucket: str = "trash",
     older_than_days: int = 30,
     admin: User = Depends(require_role("admin"))
 ):

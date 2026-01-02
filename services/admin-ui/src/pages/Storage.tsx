@@ -21,7 +21,6 @@ import {
   Statistic,
   Row,
   Col,
-  Popconfirm,
   Badge,
 } from 'antd'
 import {
@@ -39,7 +38,6 @@ import {
   ThunderboltOutlined,
   RestOutlined,
   CopyOutlined,
-  ScissorOutlined,
   HomeOutlined,
   MoreOutlined,
 } from '@ant-design/icons'
@@ -48,7 +46,7 @@ import type { UploadFile, UploadProps } from 'antd/es/upload'
 import { storageApi, StorageObject, BucketInfo } from '../api/storage'
 
 const { Sider, Content } = Layout
-const { Title, Text, Paragraph } = Typography
+const { Title, Text } = Typography
 const { Dragger } = Upload
 
 interface FileItem extends StorageObject {
@@ -71,6 +69,9 @@ export default function Storage() {
   const [processModalVisible, setProcessModalVisible] = useState(false)
   const [selectedDag, setSelectedDag] = useState('ingest_to_bronze')
   const [fileList, setFileList] = useState<UploadFile[]>([])
+  const [renameModalVisible, setRenameModalVisible] = useState(false)
+  const [renameTarget, setRenameTarget] = useState<FileItem | null>(null)
+  const [newName, setNewName] = useState('')
   
   // Queries
   const { data: buckets = [], isLoading: bucketsLoading } = useQuery({
@@ -174,6 +175,46 @@ export default function Storage() {
     },
     onError: () => {
       message.error('处理请求失败')
+    },
+  })
+  
+  const restoreMutation = useMutation({
+    mutationFn: (paths: string[]) => storageApi.restoreFromTrash(paths),
+    onSuccess: (result) => {
+      message.success(`已恢复 ${result.restored} 个对象`)
+      queryClient.invalidateQueries({ queryKey: ['storage-objects'] })
+      queryClient.invalidateQueries({ queryKey: ['storage-stats'] })
+      setSelectedRows([])
+    },
+    onError: () => {
+      message.error('恢复失败')
+    },
+  })
+  
+  const emptyTrashMutation = useMutation({
+    mutationFn: (olderThanDays: number) => storageApi.emptyTrash(olderThanDays),
+    onSuccess: (result) => {
+      message.success(result.message)
+      queryClient.invalidateQueries({ queryKey: ['storage-objects'] })
+      queryClient.invalidateQueries({ queryKey: ['storage-stats'] })
+    },
+    onError: () => {
+      message.error('清空垃圾箱失败')
+    },
+  })
+  
+  const moveMutation = useMutation({
+    mutationFn: (data: { sourcePath: string; destPath: string; destBucket?: string }) =>
+      storageApi.moveObject(selectedBucket, data.sourcePath, data.destPath, data.destBucket),
+    onSuccess: () => {
+      message.success('移动/重命名成功')
+      queryClient.invalidateQueries({ queryKey: ['storage-objects'] })
+      setRenameModalVisible(false)
+      setRenameTarget(null)
+      setNewName('')
+    },
+    onError: () => {
+      message.error('移动/重命名失败')
     },
   })
   
@@ -362,7 +403,43 @@ export default function Storage() {
           )}
           <Dropdown
             menu={{
-              items: [
+              items: selectedBucket === 'trash' ? [
+                {
+                  key: 'restore',
+                  label: '恢复',
+                  icon: <ReloadOutlined />,
+                  onClick: () => restoreMutation.mutate([record.path]),
+                },
+                {
+                  type: 'divider',
+                },
+                {
+                  key: 'delete',
+                  label: '永久删除',
+                  icon: <DeleteOutlined />,
+                  danger: true,
+                  onClick: () => {
+                    Modal.confirm({
+                      title: '确认删除',
+                      content: `确定要永久删除 "${record.name}" 吗？此操作不可恢复。`,
+                      okText: '删除',
+                      okType: 'danger',
+                      cancelText: '取消',
+                      onOk: () => deleteMutation.mutate([record.path]),
+                    })
+                  },
+                },
+              ] : [
+                {
+                  key: 'rename',
+                  label: '重命名',
+                  icon: <CopyOutlined />,
+                  onClick: () => {
+                    setRenameTarget(record)
+                    setNewName(record.name)
+                    setRenameModalVisible(true)
+                  },
+                },
                 {
                   key: 'trash',
                   label: '移到垃圾箱',
@@ -551,10 +628,53 @@ export default function Storage() {
               >
                 刷新
               </Button>
+              {selectedBucket === 'trash' && (
+                <Button
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={() => {
+                    Modal.confirm({
+                      title: '清空垃圾箱',
+                      content: '确定要删除垃圾箱中超过30天的文件吗？此操作不可恢复。',
+                      okText: '清空',
+                      okType: 'danger',
+                      cancelText: '取消',
+                      onOk: () => emptyTrashMutation.mutate(30),
+                    })
+                  }}
+                  loading={emptyTrashMutation.isPending}
+                >
+                  清空垃圾箱
+                </Button>
+              )}
               {selectedRows.length > 0 && (
                 <Dropdown
                   menu={{
-                    items: [
+                    items: selectedBucket === 'trash' ? [
+                      {
+                        key: 'restore',
+                        label: '恢复选中文件',
+                        icon: <ReloadOutlined />,
+                        onClick: () => restoreMutation.mutate(selectedRows.map((r) => r.path)),
+                      },
+                      { type: 'divider' },
+                      {
+                        key: 'delete',
+                        label: '永久删除',
+                        icon: <DeleteOutlined />,
+                        danger: true,
+                        onClick: () => {
+                          Modal.confirm({
+                            title: '确认删除',
+                            content: `确定要永久删除选中的 ${selectedRows.length} 个对象吗？`,
+                            okText: '删除',
+                            okType: 'danger',
+                            cancelText: '取消',
+                            onOk: () => deleteMutation.mutate(selectedRows.map((r) => r.path)),
+                          })
+                        },
+                      },
+                    ] : [
                       {
                         key: 'process',
                         label: '处理选中文件',
@@ -755,6 +875,51 @@ export default function Storage() {
             ))}
           </div>
         </div>
+      </Modal>
+      
+      {/* Rename Modal */}
+      <Modal
+        title="重命名"
+        open={renameModalVisible}
+        onOk={() => {
+          if (renameTarget && newName && newName !== renameTarget.name) {
+            const basePath = renameTarget.path.substring(0, renameTarget.path.lastIndexOf('/') + 1)
+            const destPath = basePath + newName + (renameTarget.is_dir ? '/' : '')
+            moveMutation.mutate({
+              sourcePath: renameTarget.path,
+              destPath: destPath,
+            })
+          }
+        }}
+        onCancel={() => {
+          setRenameModalVisible(false)
+          setRenameTarget(null)
+          setNewName('')
+        }}
+        confirmLoading={moveMutation.isPending}
+        okText="确定"
+        cancelText="取消"
+      >
+        <div style={{ marginBottom: 16 }}>
+          <Text type="secondary">
+            原名称: {renameTarget?.name}
+          </Text>
+        </div>
+        <Input
+          placeholder="请输入新名称"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          onPressEnter={() => {
+            if (renameTarget && newName && newName !== renameTarget.name) {
+              const basePath = renameTarget.path.substring(0, renameTarget.path.lastIndexOf('/') + 1)
+              const destPath = basePath + newName + (renameTarget.is_dir ? '/' : '')
+              moveMutation.mutate({
+                sourcePath: renameTarget.path,
+                destPath: destPath,
+              })
+            }
+          }}
+        />
       </Modal>
     </div>
   )

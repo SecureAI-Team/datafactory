@@ -363,7 +363,7 @@ export const storageApi = {
     olderThanDays: number = 30
   ): Promise<{ message: string; deleted: number }> => {
     const response = await axios.delete(
-      `${API_BASE}/api/storage/buckets/trash/trash/empty`,
+      `${API_BASE}/api/storage/trash/empty`,
       {
         params: { older_than_days: olderThanDays },
         headers: getAuthHeaders(),

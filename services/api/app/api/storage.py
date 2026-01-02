@@ -2,6 +2,7 @@
 import os
 import io
 import mimetypes
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
@@ -12,7 +13,10 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models.user import User
 from ..clients.minio_client import get_client as get_minio_client
+from ..config import settings
 from .auth import require_role
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/storage", tags=["storage"])
 
@@ -111,17 +115,55 @@ def ensure_bucket_exists(minio_client, bucket_name: str):
 
 # ==================== API Endpoints ====================
 
+@router.get("/debug")
+async def storage_debug(
+    admin: User = Depends(require_role("admin", "data_ops"))
+):
+    """Debug endpoint to check MinIO configuration"""
+    # Test actual connection
+    connection_status = "unknown"
+    bucket_count = 0
+    error_message = None
+    
+    try:
+        minio_client = get_minio_client()
+        buckets = list(minio_client.list_buckets())
+        bucket_count = len(buckets)
+        connection_status = "connected"
+    except Exception as e:
+        connection_status = "failed"
+        error_message = str(e)
+    
+    return {
+        "minio_url": settings.minio_url,
+        "minio_user": settings.minio_user,
+        "minio_pass_set": bool(settings.minio_pass),
+        "minio_pass_length": len(settings.minio_pass) if settings.minio_pass else 0,
+        "connection_status": connection_status,
+        "bucket_count": bucket_count,
+        "error_message": error_message,
+    }
+
+
 @router.get("/buckets", response_model=List[BucketInfo])
 async def list_buckets(
     admin: User = Depends(require_role("admin", "data_ops"))
 ):
     """List all MinIO buckets"""
     try:
+        logger.info(f"[Storage] Attempting to connect to MinIO at: {settings.minio_url}")
+        logger.info(f"[Storage] MinIO user: {settings.minio_user}")
+        logger.info(f"[Storage] MinIO pass set: {bool(settings.minio_pass)}")
+        
         minio_client = get_minio_client()
+        logger.info(f"[Storage] MinIO client created, listing buckets...")
+        
         buckets = minio_client.list_buckets()
+        logger.info(f"[Storage] Found {len(buckets)} buckets")
         
         result = []
         for bucket in buckets:
+            logger.info(f"[Storage] Bucket: {bucket.name}")
             result.append(BucketInfo(
                 name=bucket.name,
                 creation_date=bucket.creation_date.isoformat() if bucket.creation_date else None
@@ -129,6 +171,7 @@ async def list_buckets(
         
         return result
     except Exception as e:
+        logger.error(f"[Storage] Failed to list buckets: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to list buckets: {str(e)}"

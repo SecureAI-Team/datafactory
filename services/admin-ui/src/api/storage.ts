@@ -1,6 +1,7 @@
 import axios from 'axios'
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+// Use relative URL - nginx will proxy /api to the backend
+const API_BASE = import.meta.env.VITE_API_URL || ''
 
 // Get auth headers
 const getAuthHeaders = () => {

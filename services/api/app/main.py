@@ -22,6 +22,7 @@ from .api import stats
 from .api import tasks
 from .api import config
 from .api import llm
+from .api import storage
 
 app = FastAPI(
     title="AI Data Factory API",
@@ -105,6 +106,9 @@ app.include_router(config.router, tags=["config"])
 
 # LLM 配置 API (提供商/模型/分配)
 app.include_router(llm.router, tags=["llm-config"])
+
+# 存储管理 API (MinIO)
+app.include_router(storage.router, tags=["storage"])
 
 @app.get("/health")
 def health():

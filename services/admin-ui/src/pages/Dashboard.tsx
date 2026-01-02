@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Card, Row, Col, Statistic, Table, Tag, List, Typography, Spin, message, Button, Modal, Select, Space } from 'antd'
+import { Card, Row, Col, Statistic, Table, Tag, List, Typography, Spin, message, Button, Modal, Space } from 'antd'
 import {
   FileTextOutlined,
   DatabaseOutlined,
@@ -8,8 +8,7 @@ import {
   CheckCircleOutlined,
   SyncOutlined,
   RiseOutlined,
-  PlayCircleOutlined,
-  ThunderboltOutlined,
+  CloudServerOutlined,
 } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { statsApi, reviewApi } from '../api'
@@ -113,8 +112,6 @@ function formatTimeAgo(isoString: string | null | undefined): string {
 
 export default function Dashboard() {
   const queryClient = useQueryClient()
-  const [pipelineModalVisible, setPipelineModalVisible] = useState(false)
-  const [selectedDag, setSelectedDag] = useState('ingest_to_bronze')
   const [reindexing, setReindexing] = useState(false)
   
   // Fetch overview stats
@@ -188,31 +185,6 @@ export default function Dashboard() {
     })
   }
   
-  // Fetch available DAGs
-  const { data: dagsData } = useQuery({
-    queryKey: ['available-dags'],
-    queryFn: () => statsApi.getAvailableDags(),
-    staleTime: 300000, // 5 minutes
-  })
-  
-  // Trigger pipeline mutation
-  const triggerMutation = useMutation({
-    mutationFn: (dagId: string) => statsApi.triggerPipeline(dagId),
-    onSuccess: (result) => {
-      if (result.success) {
-        message.success(result.message)
-        setPipelineModalVisible(false)
-        queryClient.invalidateQueries({ queryKey: ['stats-pipeline'] })
-        queryClient.invalidateQueries({ queryKey: ['stats-activity'] })
-      } else {
-        message.error(result.message)
-      }
-    },
-    onError: () => {
-      message.error('触发 Pipeline 失败')
-    },
-  })
-
   // Reindex all KUs mutation
   const reindexMutation = useMutation({
     mutationFn: () => reviewApi.reindexAll(),
@@ -262,10 +234,10 @@ export default function Dashboard() {
           </Button>
           <Button
             type="primary"
-            icon={<ThunderboltOutlined />}
-            onClick={() => setPipelineModalVisible(true)}
+            icon={<CloudServerOutlined />}
+            href="/storage"
           >
-            处理新材料
+            存储管理
           </Button>
         </Space>
       </div>
@@ -395,51 +367,6 @@ export default function Dashboard() {
         </Col>
       </Row>
       
-      {/* Pipeline Trigger Modal */}
-      <Modal
-        title={
-          <span>
-            <PlayCircleOutlined style={{ marginRight: 8 }} />
-            触发 Pipeline
-          </span>
-        }
-        open={pipelineModalVisible}
-        onCancel={() => setPipelineModalVisible(false)}
-        onOk={() => triggerMutation.mutate(selectedDag)}
-        okText="触发"
-        okButtonProps={{ loading: triggerMutation.isPending }}
-        cancelText="取消"
-      >
-        <div style={{ marginBottom: 16 }}>
-          <Text type="secondary">选择要触发的 Pipeline：</Text>
-        </div>
-        <Select
-          style={{ width: '100%' }}
-          value={selectedDag}
-          onChange={setSelectedDag}
-          options={(dagsData?.dags ?? []).map(dag => ({
-            value: dag.id,
-            label: (
-              <div>
-                <div style={{ fontWeight: 500 }}>{dag.name}</div>
-                <div style={{ fontSize: 12, color: '#94a3b8' }}>{dag.description}</div>
-              </div>
-            ),
-          }))}
-          optionLabelProp="label"
-        />
-        <div style={{ marginTop: 16, padding: 12, background: '#1e293b', borderRadius: 8 }}>
-          <Space direction="vertical" size={4}>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              <ThunderboltOutlined style={{ marginRight: 4 }} />
-              提示：触发后，Pipeline 将在后台处理新上传的材料
-            </Text>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              处理流程：导入 → 提取 → 扩展 → 索引 → 发布
-            </Text>
-          </Space>
-        </div>
-      </Modal>
     </div>
   )
 }

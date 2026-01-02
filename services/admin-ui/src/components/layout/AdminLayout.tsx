@@ -13,6 +13,7 @@ import {
   CheckSquareOutlined,
   LineChartOutlined,
   MergeCellsOutlined,
+  CloudServerOutlined,
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 
@@ -32,6 +33,11 @@ const menuItems: MenuProps['items'] = [
     key: '/review',
     icon: <FileSearchOutlined />,
     label: '贡献审核',
+  },
+  {
+    key: '/storage',
+    icon: <CloudServerOutlined />,
+    label: '存储管理',
   },
   {
     key: '/dedup',

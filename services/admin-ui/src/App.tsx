@@ -9,6 +9,7 @@ import Users from './pages/Users'
 import Settings from './pages/Settings'
 import Tasks from './pages/Tasks'
 import Quality from './pages/Quality'
+import Storage from './pages/Storage'
 import Login from './pages/Login'
 
 function App() {
@@ -37,6 +38,7 @@ function App() {
         <Route path="/" element={<AdminLayout onLogout={() => setIsAuthenticated(false)} />}>
           <Route index element={<Dashboard />} />
           <Route path="review" element={<Review />} />
+          <Route path="storage" element={<Storage />} />
           <Route path="dedup" element={<Dedup />} />
           <Route path="config" element={<Config />} />
           <Route path="tasks" element={<Tasks />} />

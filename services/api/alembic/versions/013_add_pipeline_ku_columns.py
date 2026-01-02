@@ -16,8 +16,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 
 # revision identifiers
-revision = '013_add_pipeline_ku_columns'
-down_revision = '012_add_dynamic_interaction_columns'
+revision = '013'
+down_revision = '012'
 branch_labels = None
 depends_on = None
 

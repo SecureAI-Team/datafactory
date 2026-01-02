@@ -28,7 +28,7 @@ import {
   ClockCircleOutlined
 } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { tasksApi, Task, CreateTaskRequest } from '../api'
+import { tasksApi, Task, CreateTaskRequest, usersApi } from '../api'
 import dayjs from 'dayjs'
 
 const { Title, Text } = Typography
@@ -69,6 +69,12 @@ export default function Tasks() {
   const { data: statsData } = useQuery({
     queryKey: ['task-stats'],
     queryFn: () => tasksApi.getTaskStats(),
+  })
+  
+  // Fetch users for assignee dropdown
+  const { data: usersData } = useQuery({
+    queryKey: ['users-list'],
+    queryFn: () => usersApi.list({ limit: 100 }),
   })
   
   // Mutations
@@ -394,6 +400,24 @@ export default function Tasks() {
               <Select.Option value="normal">普通</Select.Option>
               <Select.Option value="high">高</Select.Option>
               <Select.Option value="urgent">紧急</Select.Option>
+            </Select>
+          </Form.Item>
+          
+          <Form.Item label="负责人" name="assignee_id">
+            <Select 
+              allowClear 
+              placeholder="选择负责人" 
+              showSearch
+              optionFilterProp="children"
+              filterOption={(input, option) =>
+                (option?.children as unknown as string)?.toLowerCase().includes(input.toLowerCase())
+              }
+            >
+              {usersData?.users?.map(user => (
+                <Select.Option key={user.id} value={user.id}>
+                  {user.display_name || user.username} ({user.role})
+                </Select.Option>
+              ))}
             </Select>
           </Form.Item>
           

@@ -30,7 +30,19 @@ export interface DedupStats {
   dismissed: number
 }
 
+export interface CreateDedupGroupRequest {
+  ku_ids: string[]
+  similarity_score?: number
+  creator: string
+}
+
 export const dedupApi = {
+  // 手动创建重复组
+  create: async (data: CreateDedupGroupRequest): Promise<DedupGroup> => {
+    const response = await apiClient.post('/api/v1/dedup/create', data)
+    return response.data
+  },
+
   // 获取待处理的重复组
   getPending: async (limit: number = 20): Promise<DedupGroup[]> => {
     const response = await apiClient.get('/api/v1/dedup/pending', { params: { limit } })
@@ -68,11 +80,37 @@ export const dedupApi = {
     return response.data
   },
 
+  // 执行合并
+  executeMerge: async (groupId: string, strategy: string = 'comprehensive'): Promise<{
+    success: boolean
+    message: string
+    merged_ku_id: number
+    source_ku_ids: string[]
+  }> => {
+    const response = await apiClient.post(`/api/v1/dedup/group/${groupId}/merge`, { strategy })
+    return response.data
+  },
+
   // 获取统计数据
   getStats: async (): Promise<DedupStats> => {
     const response = await apiClient.get('/api/v1/dedup/stats')
     return response.data
   },
+
+  // 查找相似 KU
+  findSimilar: async (kuId: number, params?: { min_similarity?: number; limit?: number }): Promise<SimilarKU[]> => {
+    const response = await apiClient.get(`/api/v1/dedup/similar/${kuId}`, { params })
+    return response.data
+  },
+}
+
+export interface SimilarKU {
+  id: string
+  title: string
+  summary: string
+  ku_type?: string
+  product_id?: string
+  similarity_score: number
 }
 
 export default dedupApi

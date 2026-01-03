@@ -206,6 +206,17 @@ services:
     depends_on: [api]
     restart: unless-stopped
 
+  # Ragas 评估服务
+  evaluator:
+    build: ./services/evaluator
+    environment:
+      UPSTREAM_LLM_API_KEY: ${DASHSCOPE_API_KEY}
+      UPSTREAM_LLM_URL: ${UPSTREAM_LLM_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-qwen-plus}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-v3}
+    ports: ["8002:8002"]
+    restart: unless-stopped
+
   n8n:
     image: n8nio/n8n:1.82.1
     environment:

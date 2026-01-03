@@ -8,6 +8,7 @@ export { settingsApi } from './settings'
 export { tasksApi } from './tasks'
 export { llmApi } from './llm'
 export { dedupApi } from './dedup'
+export { regressionApi } from './regression'
 
 export type { User, LoginRequest, AuthResponse } from './auth'
 export type { CreateUserRequest, UpdateUserRequest, UsersListResponse } from './users'
@@ -18,4 +19,5 @@ export type { LLMProvider, LLMModel, ModelAssignment, IntegrationStatus, SystemC
 export type { Task, CreateTaskRequest, UpdateTaskRequest, TaskStats } from './tasks'
 export type { LLMProvider as LLMProviderConfig, LLMModel as LLMModelConfig, LLMAssignment } from './llm'
 export type { DedupGroup, DedupStats, KUCandidate, CreateDedupGroupRequest, SimilarKU } from './dedup'
+export type { TestCase, TestCaseCreate, TestCaseUpdate, TestRun, TestRunCreate, TestResult, ManualReview, RegressionStats, LLMEvaluation } from './regression'
 
